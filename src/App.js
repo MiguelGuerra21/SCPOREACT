@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import MapView from "@arcgis/core/views/MapView";
 import Map from "@arcgis/core/Map";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
@@ -8,6 +8,23 @@ import shp from "shpjs";
 const App = () => {
   const mapDiv = useRef(null);
   const viewRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   useEffect(() => {
     if (!mapDiv.current) return;
@@ -39,9 +56,9 @@ const App = () => {
     }
   };
 
-  const handleFileChange = async (e) => {
-    const file = e.target.files[0];
+  const handleFileOpen = async (file) => {
     if (!file || !viewRef.current) return;
+    setMenuOpen(false);
 
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -117,10 +134,107 @@ const App = () => {
     }
   };
 
+  const handleClearMap = () => {
+    if (viewRef.current) {
+      viewRef.current.map.removeAll();
+    }
+    setMenuOpen(false);
+  };
+
+  const handleCloseApp = () => {
+    window.close();
+    setMenuOpen(false);
+  };
+
+  const triggerFileInput = () => {
+    fileInputRef.current.click();
+    setMenuOpen(false);
+  };
+
+  const toggleMenu = () => {
+    setMenuOpen(!menuOpen);
+  };
+
   return (
     <div>
-      <input type="file" accept=".zip" onChange={handleFileChange} />
-      <div style={{ height: "600px" }} ref={mapDiv}></div>
+      {/* Hidden file input */}
+      <input 
+        type="file" 
+        accept=".zip" 
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          if (e.target.files[0]) {
+            handleFileOpen(e.target.files[0]);
+          }
+        }} 
+      />
+      
+      {/* Menu Bar */}
+      <div style={{
+        backgroundColor: '#f0f0f0',
+        padding: '5px',
+        borderBottom: '1px solid #ccc',
+        position: 'relative'
+      }}>
+        <div ref={menuRef} style={{ display: 'inline-block' }}>
+          <button 
+            style={{
+              padding: '5px 10px',
+              backgroundColor: 'transparent',
+              border: 'none',
+              cursor: 'pointer'
+            }}
+            onClick={toggleMenu}
+          >
+            Archivo
+          </button>
+          {menuOpen && (
+            <div style={{
+              position: 'absolute',
+              backgroundColor: 'white',
+              border: '1px solid #ccc',
+              boxShadow: '2px 2px 5px rgba(0,0,0,0.2)',
+              zIndex: 1000,
+              minWidth: '150px'
+            }}>
+              <div 
+                style={{ 
+                  padding: '5px 10px', 
+                  cursor: 'pointer', 
+                  ':hover': { backgroundColor: '#f0f0f0' } 
+                }}
+                onClick={triggerFileInput}
+              >
+                Abrir nuevo
+              </div>
+              <div 
+                style={{ 
+                  padding: '5px 10px', 
+                  cursor: 'pointer', 
+                  ':hover': { backgroundColor: '#f0f0f0' } 
+                }}
+                onClick={handleClearMap}
+              >
+                Limpiar mapa
+              </div>
+              <div style={{ height: '1px', backgroundColor: '#ccc', margin: '5px 0' }}></div>
+              <div 
+                style={{ 
+                  padding: '5px 10px', 
+                  cursor: 'pointer', 
+                  ':hover': { backgroundColor: '#f0f0f0' } 
+                }}
+                onClick={handleCloseApp}
+              >
+                Cerrar
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ height: "calc(100vh - 37px)" }} ref={mapDiv}></div>
     </div>
   );
 };
