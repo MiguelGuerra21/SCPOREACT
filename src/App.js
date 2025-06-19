@@ -3,6 +3,7 @@ import MapView from "@arcgis/core/views/MapView";
 import Map from "@arcgis/core/Map";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import Extent from "@arcgis/core/geometry/Extent";
+import Graphic from "@arcgis/core/Graphic";
 import "@arcgis/core/assets/esri/themes/light/main.css";
 import shp from "shpjs";
 
@@ -65,8 +66,7 @@ const App = () => {
       case "linestring":
         return { type: "polyline", paths: [geo.coordinates] };
       case "polygon":
-        // GeoJSON polygon coordinates usually: [ [ [x,y], [x,y], ... ] , ... ]
-        // ArcGIS expects rings array of linear rings
+        // GeoJSON polygon coords: [ [ [x,y], ... ] , ... ]
         return { type: "polygon", rings: geo.coordinates };
       default:
         console.warn("Tipo no soportado:", type);
@@ -174,6 +174,7 @@ const App = () => {
       // Attach drag listener for SHIFT+drag box selection
       // We store in dragHandleRef so we can remove later
       let dragOrigin = null;
+      let boxGraphic = null; // to show rubber-band
       const dragHandle = view.on("drag", async (event) => {
         // Only handle left mouse button + Shift key
         if (event.button === 0 && event.native.shiftKey) {
@@ -181,12 +182,70 @@ const App = () => {
           event.stopPropagation();
 
           if (event.action === "start") {
+            // record origin and create the boxGraphic
             dragOrigin = [event.x, event.y];
+            // initial tiny box (will update in "update")
+            const p = view.toMap({ x: event.x, y: event.y });
+            const initRings = [
+              [p.x, p.y],
+              [p.x, p.y],
+              [p.x, p.y],
+              [p.x, p.y],
+              [p.x, p.y],
+            ];
+            boxGraphic = new Graphic({
+              geometry: {
+                type: "polygon",
+                rings: [initRings],
+                spatialReference: view.spatialReference,
+              },
+              symbol: {
+                type: "simple-fill",
+                color: [0, 255, 255, 0.2],   // semi-transparent cyan fill
+                outline: {
+                color: [0, 0, 255, 1],     // solid blue border
+                width: 2, 
+                style: "solid", // dashed outline
+                },
+              },
+            });
+            view.graphics.add(boxGraphic);
+          } else if (event.action === "update" && dragOrigin) {
+            // update the box geometry as pointer moves
+            const [x0, y0] = dragOrigin;
+            const x1 = event.x, y1 = event.y;
+            const p1 = view.toMap({ x: x0, y: y0 });
+            const p2 = view.toMap({ x: x1, y: y1 });
+            const xmin = Math.min(p1.x, p2.x);
+            const xmax = Math.max(p1.x, p2.x);
+            const ymin = Math.min(p1.y, p2.y);
+            const ymax = Math.max(p1.y, p2.y);
+            const rings = [
+              [xmin, ymin],
+              [xmin, ymax],
+              [xmax, ymax],
+              [xmax, ymin],
+              [xmin, ymin],
+            ];
+            if (boxGraphic) {
+              boxGraphic.geometry = {
+                type: "polygon",
+                rings: [rings],
+                spatialReference: view.spatialReference,
+              };
+            }
           } else if (event.action === "end" && dragOrigin) {
-            // Convert the two screen points to map points
-            const p1 = view.toMap({ x: dragOrigin[0], y: dragOrigin[1] });
-            const p2 = view.toMap({ x: event.x, y: event.y });
-            // Build an Extent
+            // Finalize the box, remove graphic, then query/highlight
+            const [x0, y0] = dragOrigin;
+            const x1 = event.x, y1 = event.y;
+            // Remove the visual box
+            if (boxGraphic) {
+              view.graphics.remove(boxGraphic);
+              boxGraphic = null;
+            }
+            // Build extent from two corners
+            const p1 = view.toMap({ x: x0, y: y0 });
+            const p2 = view.toMap({ x: x1, y: y1 });
             const queryExt = new Extent({
               xmin: Math.min(p1.x, p2.x),
               ymin: Math.min(p1.y, p2.y),
@@ -197,7 +256,7 @@ const App = () => {
             // Query features intersecting that extent
             const query = layerView.createQuery();
             query.geometry = queryExt;
-            // Optionally adjust spatialRelationship, outFields, etc.
+            // Optionally adjust spatialRelationship or outFields
             const result = await layerView.queryFeatures(query);
             // Remove previous highlight
             if (highlightHandleRef.current) {
