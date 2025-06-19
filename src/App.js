@@ -27,6 +27,7 @@ const App = () => {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
+  // State para el número de seleccionados total
   const [selectedCount, setSelectedCount] = useState(0);
 
   // Cerrar menú al hacer click fuera
@@ -57,14 +58,10 @@ const App = () => {
 
     // Quitar controles de zoom predeterminados
     view.when(() => {
-      // El id "zoom" corresponde al widget Zoom predeterminado
       view.ui.remove("zoom");
-      // Si deseas quitar también la brújula u otros, podrías:
-      // view.ui.remove("compass");
-      // view.ui.remove("attribution"); // etc.
     });
 
-    // Después de que view esté lista, adjuntar drag listener para SHIFT+drag selección
+    // Adjuntar SHIFT+drag box selection
     view.when(() => {
       if (dragHandleRef.current) {
         return;
@@ -93,9 +90,9 @@ const App = () => {
               },
               symbol: {
                 type: "simple-fill",
-                color: [0, 255, 255, 0.2], // visual temporal durante drag
+                color: [0, 255, 255, 0.2], // cyan semitransparente
                 outline: {
-                  color: [0, 0, 255, 1],
+                  color: [0, 0, 255, 1], // borde azul
                   width: 2,
                 },
               },
@@ -143,8 +140,8 @@ const App = () => {
               spatialReference: view.spatialReference,
             });
 
-            // Query y resaltar cada capa visible
-            let totalCount = 0;
+            // Query y actualizar selección en cada capa visible
+            let total = 0;
             const currentLayers = layersRef.current;
             for (let entry of currentLayers) {
               const { layerView, visible, highlightHandle } = entry;
@@ -152,24 +149,36 @@ const App = () => {
                 try {
                   const query = layerView.createQuery();
                   query.geometry = queryExt;
+                  // Por defecto spatialRelationship intersecta
                   const result = await layerView.queryFeatures(query);
+                  // Extraemos OBJECTIDs seleccionados
+                  const ids = result.features.map(f => f.attributes.OBJECTID);
+                  entry.selectedIds = ids; // actualizamos selección interna
+                  // Removemos highlight previo
                   if (highlightHandle) {
                     highlightHandle.remove();
                   }
-                  const newHandle = layerView.highlight(result.features);
-                  entry.highlightHandle = newHandle;
-                  totalCount += result.features.length;
+                  // Highlight de las features seleccionadas
+                  if (ids.length > 0) {
+                    // Podemos resaltar directamente result.features
+                    entry.highlightHandle = layerView.highlight(result.features);
+                  } else {
+                    entry.highlightHandle = null;
+                  }
+                  total += ids.length;
                 } catch (err) {
                   console.error("Error querying layer in box selection:", err);
                 }
               } else {
+                // no visible o layerView no listo: limpiamos highlight y selectedIds
                 if (entry.highlightHandle) {
                   entry.highlightHandle.remove();
                   entry.highlightHandle = null;
                 }
+                entry.selectedIds = [];
               }
             }
-            setSelectedCount(totalCount);
+            setSelectedCount(total);
             dragOrigin = null;
           }
         }
@@ -194,6 +203,72 @@ const App = () => {
   useEffect(() => {
     layersRef.current = layers;
   }, [layers]);
+
+  // Lógica para CTRL+click acumulativo
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const handleCtrlClick = async (event) => {
+      if (!event.native.ctrlKey) return;
+      // Hit test para obtener gráfico bajo cursor
+      const hit = await view.hitTest(event);
+      if (!hit.results.length) return;
+      // Encontrar el resultado cuyo layerView corresponda a alguna de nuestras capas
+      const result = hit.results.find(r =>
+        layersRef.current.some(entry => entry.layerView && r.graphic.layer === entry.layer)
+      );
+      if (!result) return;
+      const graphic = result.graphic;
+      const layer = result.graphic.layer;
+      // Encontrar entry correspondiente
+      const entry = layersRef.current.find(e => e.layer === layer);
+      if (!entry) return;
+      const oid = graphic.getAttribute("OBJECTID");
+      if (oid == null) return;
+      // Toggle en entry.selectedIds
+      const prevIds = entry.selectedIds || [];
+      let newIds;
+      if (prevIds.includes(oid)) {
+        newIds = prevIds.filter(id => id !== oid);
+      } else {
+        newIds = [...prevIds, oid];
+      }
+      entry.selectedIds = newIds;
+      // Actualizar highlight en esa capa:
+      if (entry.highlightHandle) {
+        entry.highlightHandle.remove();
+        entry.highlightHandle = null;
+      }
+      if (newIds.length > 0) {
+        // Query las features seleccionadas por OBJECTID
+        try {
+          const query = entry.layerView.createQuery();
+          query.objectIds = newIds;
+          query.returnGeometry = true;
+          const resultSel = await entry.layerView.queryFeatures(query);
+          if (resultSel.features.length) {
+            entry.highlightHandle = entry.layerView.highlight(resultSel.features);
+          }
+        } catch (err) {
+          console.error("Error querying selected features by OBJECTID:", err);
+        }
+      }
+      // Recalcular selectedCount total de todas las capas:
+      let total = 0;
+      for (let e of layersRef.current) {
+        if (Array.isArray(e.selectedIds)) {
+          total += e.selectedIds.length;
+        }
+      }
+      setSelectedCount(total);
+    };
+
+    view.on("click", handleCtrlClick);
+    return () => {
+      view.off("click", handleCtrlClick);
+    };
+  }, []);
 
   // Util: convertir geometría GeoJSON a ArcGIS
   const convertGeometry = (geo) => {
@@ -338,7 +413,8 @@ const App = () => {
         layerView: layerView,
         visible: true,
         highlightHandle: null,
-        extent: extentResult?.extent || null, // guardamos el extent
+        selectedIds: [],            // inicialmente sin selección
+        extent: extentResult?.extent || null,
       };
       setLayers((prev) => [...prev, newEntry]);
     } catch (error) {
@@ -359,11 +435,21 @@ const App = () => {
             entry.highlightHandle.remove();
             entry.highlightHandle = null;
           }
+          // Si ocultamos capa, limpiamos selección interna:
+          if (!newVis) {
+            entry.selectedIds = [];
+          }
           return { ...entry, visible: newVis };
         }
         return entry;
       })
     );
+    // Recalcular selectedCount en caso de cambios:
+    let total = 0;
+    layersRef.current.forEach(e => {
+      if (Array.isArray(e.selectedIds)) total += e.selectedIds.length;
+    });
+    setSelectedCount(total);
   };
 
   // Limpiar mapa con confirmación
@@ -416,7 +502,6 @@ const App = () => {
         if (!unionExtent) {
           unionExtent = entry.extent;
         } else {
-          // Extent.union devuelve una nueva extensión que engloba ambas
           unionExtent = unionExtent.union(entry.extent);
         }
       }
@@ -585,13 +670,12 @@ const App = () => {
         </div>
       )}
 
-      {/* Conteo de seleccionados */}
+      {/* Conteo de seleccionados, con botón “Deseleccionar todo” */}
       {selectedCount > 0 && (
         <div
           style={{
             position: "absolute",
-            bottom : 10,
-            top: 10,
+            bottom: 10,
             right: 10,
             backgroundColor: "white",
             padding: "6px 12px",
@@ -601,7 +685,24 @@ const App = () => {
             zIndex: 1000,
           }}
         >
-          Seleccionados: {selectedCount}
+          <div>Seleccionados: {selectedCount}</div>
+          <hr style={{ margin: "4px 0" }} />
+          <button
+            style={{ padding: "4px 8px", cursor: "pointer" }}
+            onClick={() => {
+              // Deseleccionar todo:
+              layersRef.current.forEach(entry => {
+                if (entry.highlightHandle) {
+                  entry.highlightHandle.remove();
+                  entry.highlightHandle = null;
+                }
+                entry.selectedIds = [];
+              });
+              setSelectedCount(0);
+            }}
+          >
+            Deseleccionar todo
+          </button>
         </div>
       )}
 
