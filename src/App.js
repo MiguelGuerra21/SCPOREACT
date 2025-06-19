@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import MapView from "@arcgis/core/views/MapView";
 import Map from "@arcgis/core/Map";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
+import Extent from "@arcgis/core/geometry/Extent";
 import "@arcgis/core/assets/esri/themes/light/main.css";
 import shp from "shpjs";
 
@@ -10,6 +11,13 @@ const App = () => {
   const viewRef = useRef(null);
   const fileInputRef = useRef(null);
   const featureLayerRef = useRef(null);
+
+  // Refs to store handles so we can remove them later
+  const dragHandleRef = useRef(null);
+  const highlightHandleRef = useRef(null);
+  // Store the layerView so we don’t call whenLayerView repeatedly
+  const layerViewRef = useRef(null);
+
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const [selectedCount, setSelectedCount] = useState(0);
@@ -27,7 +35,7 @@ const App = () => {
     };
   }, []);
 
-  // Initialize map
+  // Initialize map once
   useEffect(() => {
     if (!mapDiv.current) return;
 
@@ -40,40 +48,15 @@ const App = () => {
     });
     viewRef.current = view;
 
-    return () => view.destroy();
-  }, []);
-
-  // Add selection count listener
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-
-    const handleSelectionUpdate = async () => {
-      const featureLayer = featureLayerRef.current;
-      if (!featureLayer) return;
-
-      const layerView = await view.whenLayerView(featureLayer);
-      const result = await layerView.queryFeatures({
-        where: "1=1",
-        returnGeometry: false,
-      });
-      setSelectedCount(result.features.length);
-    };
-
-    const handlePointerUp = async (event) => {
-      // Wait a bit for selection box to finish
-      setTimeout(() => {
-        handleSelectionUpdate();
-      }, 200);
-    };
-
-    view.on("pointer-up", handlePointerUp);
-
     return () => {
-      view?.off("pointer-up", handlePointerUp);
+      // Cleanup view on unmount
+      if (view) {
+        view.destroy();
+      }
     };
   }, []);
 
+  // Utility to convert GeoJSON geometry to ArcGIS geometry
   const convertGeometry = (geo) => {
     const type = geo.type.toLowerCase();
     switch (type) {
@@ -82,6 +65,8 @@ const App = () => {
       case "linestring":
         return { type: "polyline", paths: [geo.coordinates] };
       case "polygon":
+        // GeoJSON polygon coordinates usually: [ [ [x,y], [x,y], ... ] , ... ]
+        // ArcGIS expects rings array of linear rings
         return { type: "polygon", rings: geo.coordinates };
       default:
         console.warn("Tipo no soportado:", type);
@@ -89,8 +74,29 @@ const App = () => {
     }
   };
 
+  // Called when user selects a file
   const handleFileOpen = async (file) => {
     if (!file || !viewRef.current) return;
+    const view = viewRef.current;
+
+    // Before adding a new layer, clear any existing layer, handles, highlights
+    if (featureLayerRef.current) {
+      // Remove old layer
+      view.map.remove(featureLayerRef.current);
+      featureLayerRef.current = null;
+    }
+    // Remove old drag listener
+    if (dragHandleRef.current) {
+      dragHandleRef.current.remove();
+      dragHandleRef.current = null;
+    }
+    // Remove old highlight
+    if (highlightHandleRef.current) {
+      highlightHandleRef.current.remove();
+      highlightHandleRef.current = null;
+    }
+    layerViewRef.current = null;
+    setSelectedCount(0);
 
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -110,6 +116,7 @@ const App = () => {
         return;
       }
 
+      // Build dynamic fields from first feature's properties
       const firstProps = geojson.features[0]?.properties || {};
       const dynamicFields = Object.keys(firstProps).map((key) => ({
         name: key,
@@ -148,25 +155,87 @@ const App = () => {
       });
 
       featureLayerRef.current = featureLayer;
+      view.map.removeAll(); // or remove previous layers
+      view.map.add(featureLayer);
 
-      viewRef.current.map.removeAll();
-      viewRef.current.map.add(featureLayer);
-
+      // Wait until layer is ready
       await featureLayer.when();
-      const extent = await featureLayer.queryExtent();
-      if (extent?.extent) {
-        await viewRef.current.goTo({ target: extent.extent, padding: 50 });
+
+      // Zoom to layer extent
+      const extentResult = await featureLayer.queryExtent();
+      if (extentResult?.extent) {
+        await view.goTo({ target: extentResult.extent, padding: 50 });
       }
+
+      // Now that the layer is added and ready, get its layerView
+      const layerView = await view.whenLayerView(featureLayer);
+      layerViewRef.current = layerView;
+
+      // Attach drag listener for SHIFT+drag box selection
+      // We store in dragHandleRef so we can remove later
+      let dragOrigin = null;
+      const dragHandle = view.on("drag", async (event) => {
+        // Only handle left mouse button + Shift key
+        if (event.button === 0 && event.native.shiftKey) {
+          // Prevent the default zoom-on-drag
+          event.stopPropagation();
+
+          if (event.action === "start") {
+            dragOrigin = [event.x, event.y];
+          } else if (event.action === "end" && dragOrigin) {
+            // Convert the two screen points to map points
+            const p1 = view.toMap({ x: dragOrigin[0], y: dragOrigin[1] });
+            const p2 = view.toMap({ x: event.x, y: event.y });
+            // Build an Extent
+            const queryExt = new Extent({
+              xmin: Math.min(p1.x, p2.x),
+              ymin: Math.min(p1.y, p2.y),
+              xmax: Math.max(p1.x, p2.x),
+              ymax: Math.max(p1.y, p2.y),
+              spatialReference: view.spatialReference,
+            });
+            // Query features intersecting that extent
+            const query = layerView.createQuery();
+            query.geometry = queryExt;
+            // Optionally adjust spatialRelationship, outFields, etc.
+            const result = await layerView.queryFeatures(query);
+            // Remove previous highlight
+            if (highlightHandleRef.current) {
+              highlightHandleRef.current.remove();
+            }
+            // Highlight new features
+            highlightHandleRef.current = layerView.highlight(result.features);
+            // Update count
+            setSelectedCount(result.features.length);
+
+            // Reset origin
+            dragOrigin = null;
+          }
+        }
+      });
+
+      dragHandleRef.current = dragHandle;
     } catch (error) {
       console.error("Error processing shapefile:", error);
     }
   };
 
   const handleClearMap = () => {
-    if (viewRef.current) {
-      viewRef.current.map.removeAll();
+    const view = viewRef.current;
+    if (view) {
+      view.map.removeAll();
+    }
+    // Cleanup refs and state
+    if (dragHandleRef.current) {
+      dragHandleRef.current.remove();
+      dragHandleRef.current = null;
+    }
+    if (highlightHandleRef.current) {
+      highlightHandleRef.current.remove();
+      highlightHandleRef.current = null;
     }
     featureLayerRef.current = null;
+    layerViewRef.current = null;
     setSelectedCount(0);
     setMenuOpen(false);
   };
