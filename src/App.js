@@ -478,8 +478,14 @@ const App = () => {
   };
 
   const handleCloseApp = () => {
+    const confirmed = window.confirm(
+    "¿Estás seguro de que quieres cerrar la aplicación?\n" +
+    "Los cambios no guardados se perderán"
+  );
+  if (confirmed) {
     window.close();
-    setMenuOpen(false);
+  }
+  setMenuOpen(false);
   };
 
   const triggerFileInput = () => {
