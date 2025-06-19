@@ -9,8 +9,10 @@ const App = () => {
   const mapDiv = useRef(null);
   const viewRef = useRef(null);
   const fileInputRef = useRef(null);
+  const featureLayerRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
+  const [selectedCount, setSelectedCount] = useState(0);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -19,13 +21,13 @@ const App = () => {
         setMenuOpen(false);
       }
     };
-
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
 
+  // Initialize map
   useEffect(() => {
     if (!mapDiv.current) return;
 
@@ -39,6 +41,37 @@ const App = () => {
     viewRef.current = view;
 
     return () => view.destroy();
+  }, []);
+
+  // Add selection count listener
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+
+    const handleSelectionUpdate = async () => {
+      const featureLayer = featureLayerRef.current;
+      if (!featureLayer) return;
+
+      const layerView = await view.whenLayerView(featureLayer);
+      const result = await layerView.queryFeatures({
+        where: "1=1",
+        returnGeometry: false,
+      });
+      setSelectedCount(result.features.length);
+    };
+
+    const handlePointerUp = async (event) => {
+      // Wait a bit for selection box to finish
+      setTimeout(() => {
+        handleSelectionUpdate();
+      }, 200);
+    };
+
+    view.on("pointer-up", handlePointerUp);
+
+    return () => {
+      view?.off("pointer-up", handlePointerUp);
+    };
   }, []);
 
   const convertGeometry = (geo) => {
@@ -58,24 +91,19 @@ const App = () => {
 
   const handleFileOpen = async (file) => {
     if (!file || !viewRef.current) return;
-    setMenuOpen(false);
 
     try {
       const arrayBuffer = await file.arrayBuffer();
       const geojson = await shp(arrayBuffer);
 
-      const features = geojson.features.map((f, i) => {
-        const geometry = convertGeometry(f.geometry);
-        if (!geometry) return null;
-
-        return {
-          geometry,
-          attributes: {
-            OBJECTID: i,
-            ...f.properties,
-          },
-        };
-      }).filter(Boolean);
+      const features = geojson.features
+        .map((f, i) => {
+          const geometry = convertGeometry(f.geometry);
+          return geometry
+            ? { geometry, attributes: { OBJECTID: i, ...f.properties } }
+            : null;
+        })
+        .filter(Boolean);
 
       if (features.length === 0) {
         console.warn("No valid features found in the shapefile");
@@ -83,7 +111,7 @@ const App = () => {
       }
 
       const firstProps = geojson.features[0]?.properties || {};
-      const dynamicFields = Object.keys(firstProps).map(key => ({
+      const dynamicFields = Object.keys(firstProps).map((key) => ({
         name: key,
         alias: key,
         type: "string",
@@ -108,26 +136,26 @@ const App = () => {
         },
         popupTemplate: {
           title: "Atributos",
-          content: [{
-            type: "fields",
-            fieldInfos: dynamicFields.map(f => ({ fieldName: f.name })),
-          }],
+          content: [
+            {
+              type: "fields",
+              fieldInfos: dynamicFields.map((f) => ({
+                fieldName: f.name,
+              })),
+            },
+          ],
         },
       });
+
+      featureLayerRef.current = featureLayer;
 
       viewRef.current.map.removeAll();
       viewRef.current.map.add(featureLayer);
 
       await featureLayer.when();
       const extent = await featureLayer.queryExtent();
-      
-      if (extent && extent.extent) {
-        await viewRef.current.goTo({
-          target: extent.extent,
-          padding: 50
-        });
-      } else {
-        console.warn("Could not get valid extent from feature layer");
+      if (extent?.extent) {
+        await viewRef.current.goTo({ target: extent.extent, padding: 50 });
       }
     } catch (error) {
       console.error("Error processing shapefile:", error);
@@ -138,6 +166,8 @@ const App = () => {
     if (viewRef.current) {
       viewRef.current.map.removeAll();
     }
+    featureLayerRef.current = null;
+    setSelectedCount(0);
     setMenuOpen(false);
   };
 
@@ -157,73 +187,76 @@ const App = () => {
 
   return (
     <div>
-      {/* Hidden file input */}
-      <input 
-        type="file" 
-        accept=".zip" 
+      <input
+        type="file"
+        accept=".zip"
         ref={fileInputRef}
-        style={{ display: 'none' }}
-        onChange={(e) => {
-          if (e.target.files[0]) {
-            handleFileOpen(e.target.files[0]);
-          }
-        }} 
+        style={{ display: "none" }}
+        onChange={(e) =>
+          e.target.files[0] && handleFileOpen(e.target.files[0])
+        }
       />
-      
-      {/* Menu Bar */}
-      <div style={{
-        backgroundColor: '#f0f0f0',
-        padding: '5px',
-        borderBottom: '1px solid #ccc',
-        position: 'relative'
-      }}>
-        <div ref={menuRef} style={{ display: 'inline-block' }}>
-          <button 
+
+      <div
+        style={{
+          backgroundColor: "#f0f0f0",
+          padding: "5px",
+          borderBottom: "1px solid #ccc",
+          position: "relative",
+        }}
+      >
+        <div ref={menuRef} style={{ display: "inline-block" }}>
+          <button
             style={{
-              padding: '5px 10px',
-              backgroundColor: 'transparent',
-              border: 'none',
-              cursor: 'pointer'
+              padding: "5px 10px",
+              backgroundColor: "transparent",
+              border: "none",
+              cursor: "pointer",
             }}
             onClick={toggleMenu}
           >
             Archivo
           </button>
           {menuOpen && (
-            <div style={{
-              position: 'absolute',
-              backgroundColor: 'white',
-              border: '1px solid #ccc',
-              boxShadow: '2px 2px 5px rgba(0,0,0,0.2)',
-              zIndex: 1000,
-              minWidth: '150px'
-            }}>
-              <div 
-                style={{ 
-                  padding: '5px 10px', 
-                  cursor: 'pointer', 
-                  ':hover': { backgroundColor: '#f0f0f0' } 
+            <div
+              style={{
+                position: "absolute",
+                backgroundColor: "white",
+                border: "1px solid #ccc",
+                boxShadow: "2px 2px 5px rgba(0,0,0,0.2)",
+                zIndex: 1000,
+                minWidth: "150px",
+              }}
+            >
+              <div
+                style={{
+                  padding: "5px 10px",
+                  cursor: "pointer",
                 }}
                 onClick={triggerFileInput}
               >
                 Abrir nuevo
               </div>
-              <div 
-                style={{ 
-                  padding: '5px 10px', 
-                  cursor: 'pointer', 
-                  ':hover': { backgroundColor: '#f0f0f0' } 
+              <div
+                style={{
+                  padding: "5px 10px",
+                  cursor: "pointer",
                 }}
                 onClick={handleClearMap}
               >
                 Limpiar mapa
               </div>
-              <div style={{ height: '1px', backgroundColor: '#ccc', margin: '5px 0' }}></div>
-              <div 
-                style={{ 
-                  padding: '5px 10px', 
-                  cursor: 'pointer', 
-                  ':hover': { backgroundColor: '#f0f0f0' } 
+              <div
+                style={{
+                  height: "1px",
+                  backgroundColor: "#ccc",
+                  margin: "5px 0",
+                }}
+              ></div>
+              <div
+                style={{
+                  padding: "5px 10px",
+                  cursor: "pointer",
                 }}
                 onClick={handleCloseApp}
               >
@@ -232,6 +265,22 @@ const App = () => {
             </div>
           )}
         </div>
+      </div>
+
+      <div
+        style={{
+          position: "absolute",
+          top: 10,
+          right: 10,
+          backgroundColor: "white",
+          padding: "6px 12px",
+          border: "1px solid #ccc",
+          borderRadius: "4px",
+          boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
+          zIndex: 999,
+        }}
+      >
+        Seleccionados: {selectedCount}
       </div>
 
       <div style={{ height: "calc(100vh - 37px)" }} ref={mapDiv}></div>
