@@ -1,25 +1,113 @@
-import logo from './logo.svg';
-import './App.css';
+import React, { useEffect, useRef } from "react";
+import MapView from "@arcgis/core/views/MapView";
+import Map from "@arcgis/core/Map";
+import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
+import * as fields from "@arcgis/core/layers/support/Field";
+import shp from "shpjs";
 
-function App() {
+const App = () => {
+  const mapDiv = useRef(null);
+  const viewRef = useRef(null);
+
+  useEffect(() => {
+    const map = new Map({ basemap: "streets-vector" });
+
+    const view = new MapView({
+      container: mapDiv.current,
+      map,
+      center: [-100, 40],
+      zoom: 4,
+    });
+
+    viewRef.current = view;
+  }, []);
+
+  const convertGeometry = (geo) => {
+    const type = geo.type.toLowerCase();
+    switch (type) {
+      case "point":
+        return { type: "point", x: geo.coordinates[0], y: geo.coordinates[1] };
+      case "linestring":
+        return { type: "polyline", paths: [geo.coordinates] };
+      case "polygon":
+        return { type: "polygon", rings: geo.coordinates };
+      default:
+        console.warn("Tipo no soportado:", type);
+        return null;
+    }
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const arrayBuffer = await file.arrayBuffer();
+    const geojson = await shp(arrayBuffer);
+
+    const features = geojson.features.map((f, i) => {
+      const geometry = convertGeometry(f.geometry);
+      if (!geometry) return null;
+
+      return {
+        geometry,
+        attributes: {
+          OBJECTID: i,
+          ...f.properties,
+        },
+      };
+    }).filter(Boolean); // quita nulls
+
+    // Crear los campos a partir de los atributos del primer feature
+    const firstProps = geojson.features[0]?.properties || {};
+    const dynamicFields = Object.keys(firstProps).map(key => ({
+      name: key,
+      alias: key,
+      type: "string", // simplificación: todo como string
+    }));
+
+    const featureLayer = new FeatureLayer({
+      source: features,
+      objectIdField: "OBJECTID",
+      geometryType: "polygon", // ajustar según tu shapefile
+      spatialReference: { wkid: 4326 },
+      fields: [
+        { name: "OBJECTID", alias: "OBJECTID", type: "oid" },
+        ...dynamicFields,
+      ],
+      renderer: {
+        type: "simple",
+        symbol: {
+          type: "simple-fill",
+          color: [0, 0, 255, 0.3],
+          outline: { color: [0, 0, 255], width: 1 },
+        },
+      },
+      popupTemplate: {
+        title: "Atributos",
+        content: [
+          {
+            type: "fields",
+            fieldInfos: dynamicFields.map(f => ({ fieldName: f.name })),
+          },
+        ],
+      },
+    });
+
+    // Limpiar capas anteriores y agregar nueva
+    const map = viewRef.current.map;
+    map.removeAll();
+    map.add(featureLayer);
+
+    // Ajustar vista
+    await viewRef.current.goTo(featureLayer.fullExtent);
+  };
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div>
+      <input type="file" accept=".zip" onChange={handleFileChange} />
+      <div style={{ height: "600px" }} ref={mapDiv}></div>
     </div>
   );
-}
+};
 
 export default App;
