@@ -12,24 +12,24 @@ const App = () => {
   const viewRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // State for multiple layers
+  // State para múltiples capas
   const [layers, setLayers] = useState([]);
-  // Ref to mirror layers state for use in event listeners
+  // Ref para reflejar layers en event listeners
   const layersRef = useRef([]);
-  // Unique ID counter for layers
+  // Contador único de IDs de capa
   const layerIdRef = useRef(0);
 
-  // Ref to store the drag listener handle
+  // Ref para el handle de drag
   const dragHandleRef = useRef(null);
 
-  // Loading state
+  // Estado de loading
   const [loading, setLoading] = useState(false);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const [selectedCount, setSelectedCount] = useState(0);
 
-  // Close menu when clicking outside
+  // Cerrar menú al hacer click fuera
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (menuRef.current && !menuRef.current.contains(event.target)) {
@@ -42,7 +42,7 @@ const App = () => {
     };
   }, []);
 
-  // Initialize map once
+  // Inicializar mapa una sola vez
   useEffect(() => {
     if (!mapDiv.current) return;
 
@@ -55,7 +55,16 @@ const App = () => {
     });
     viewRef.current = view;
 
-    // After view is ready, attach drag listener for SHIFT+drag selection
+    // Quitar controles de zoom predeterminados
+    view.when(() => {
+      // El id "zoom" corresponde al widget Zoom predeterminado
+      view.ui.remove("zoom");
+      // Si deseas quitar también la brújula u otros, podrías:
+      // view.ui.remove("compass");
+      // view.ui.remove("attribution"); // etc.
+    });
+
+    // Después de que view esté lista, adjuntar drag listener para SHIFT+drag selección
     view.when(() => {
       if (dragHandleRef.current) {
         return;
@@ -84,7 +93,7 @@ const App = () => {
               },
               symbol: {
                 type: "simple-fill",
-                color: [0, 255, 255, 0.2], // temp; will not persist beyond drag
+                color: [0, 255, 255, 0.2], // visual temporal durante drag
                 outline: {
                   color: [0, 0, 255, 1],
                   width: 2,
@@ -134,7 +143,7 @@ const App = () => {
               spatialReference: view.spatialReference,
             });
 
-            // Query & highlight each visible layer
+            // Query y resaltar cada capa visible
             let totalCount = 0;
             const currentLayers = layersRef.current;
             for (let entry of currentLayers) {
@@ -181,12 +190,12 @@ const App = () => {
     };
   }, []);
 
-  // Mirror layers state into ref
+  // Reflejar layers state en layersRef
   useEffect(() => {
     layersRef.current = layers;
   }, [layers]);
 
-  // Utility: convert GeoJSON geometry to ArcGIS geometry
+  // Util: convertir geometría GeoJSON a ArcGIS
   const convertGeometry = (geo) => {
     const type = geo.type.toLowerCase();
     switch (type) {
@@ -202,20 +211,17 @@ const App = () => {
     }
   };
 
-  // Helper: generate a distinct color (RGB array) based on layer index
-  // Using HSL -> RGB conversion. We vary hue by index * step, keep saturation/lightness fixed.
+  // Helper: generar color distinto según índice de capa
   const generateColorForIndex = (index) => {
-    // Choose hue step, e.g., 60 degrees per layer
     const hue = (index * 60) % 360;
-    const saturation = 70; // percent
-    const lightness = 50; // percent
-    // HSL to RGB conversion:
+    const saturation = 70;
+    const lightness = 50;
     const h = hue / 360;
     const s = saturation / 100;
     const l = lightness / 100;
     let r, g, b;
     if (s === 0) {
-      r = g = b = l; // achromatic
+      r = g = b = l;
     } else {
       const hue2rgb = (p, q, t) => {
         if (t < 0) t += 1;
@@ -231,20 +237,19 @@ const App = () => {
       g = hue2rgb(p, q, h);
       b = hue2rgb(p, q, h - 1 / 3);
     }
-    // Convert to 0-255 int
-    return [
-      Math.round(r * 255),
-      Math.round(g * 255),
-      Math.round(b * 255),
-    ];
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
   };
 
-  // Called when user selects files
+  // Cargar shapefile ZIP
   const handleFileOpen = async (file) => {
     if (!file || !viewRef.current) return;
     const view = viewRef.current;
 
-    // Derive layer name and check duplicates
+    // Reservar ID de capa antes de operaciones async
+    const newId = layerIdRef.current;
+    layerIdRef.current += 1;
+
+    // Derive nombre y verificar duplicado
     const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
     const exists = layersRef.current.some(
       (entry) => entry.name === nameWithoutExt
@@ -272,7 +277,7 @@ const App = () => {
         return;
       }
 
-      // Build dynamic fields from first feature's properties
+      // Campos dinámicos
       const firstProps = geojson.features[0]?.properties || {};
       const dynamicFields = Object.keys(firstProps).map((key) => ({
         name: key,
@@ -280,10 +285,9 @@ const App = () => {
         type: "string",
       }));
 
-      // Generate a color based on next layer index
-      const newId = layerIdRef.current;
+      // Generar color
       const [r, g, b] = generateColorForIndex(newId);
-      const fillColor = [r, g, b, 0.3]; // 30% opacity
+      const fillColor = [r, g, b, 0.3];
       const outlineColor = [r, g, b, 1];
 
       const featureLayer = new FeatureLayer({
@@ -319,7 +323,7 @@ const App = () => {
       view.map.add(featureLayer);
       await featureLayer.when();
 
-      // Zoom to layer extent
+      // Zoom a la extensión
       const extentResult = await featureLayer.queryExtent();
       if (extentResult?.extent) {
         await view.goTo({ target: extentResult.extent, padding: 50 });
@@ -327,8 +331,6 @@ const App = () => {
 
       const layerView = await view.whenLayerView(featureLayer);
 
-      // Create a new layer entry and increment id
-      layerIdRef.current += 1;
       const newEntry = {
         id: newId,
         name: nameWithoutExt || `Layer ${newId}`,
@@ -336,6 +338,7 @@ const App = () => {
         layerView: layerView,
         visible: true,
         highlightHandle: null,
+        extent: extentResult?.extent || null, // guardamos el extent
       };
       setLayers((prev) => [...prev, newEntry]);
     } catch (error) {
@@ -343,7 +346,7 @@ const App = () => {
     }
   };
 
-  // Toggle layer visibility from the layer selector UI
+  // Toggle visibilidad de capa
   const toggleLayerVisibility = (id) => {
     setLayers((prev) =>
       prev.map((entry) => {
@@ -363,7 +366,13 @@ const App = () => {
     );
   };
 
+  // Limpiar mapa con confirmación
   const handleClearMap = () => {
+    const confirmed = window.confirm(
+      "¿Estás seguro de que quieres limpiar todas las capas del mapa?"
+    );
+    if (!confirmed) return;
+
     const view = viewRef.current;
     if (view) {
       for (let entry of layersRef.current) {
@@ -396,9 +405,36 @@ const App = () => {
     setMenuOpen(!menuOpen);
   };
 
+  // Centrar vista al extent combinado de capas visibles
+  const handleCenterView = async () => {
+    const view = viewRef.current;
+    if (!view) return;
+    const currentLayers = layersRef.current;
+    let unionExtent = null;
+    for (let entry of currentLayers) {
+      if (entry.visible && entry.extent) {
+        if (!unionExtent) {
+          unionExtent = entry.extent;
+        } else {
+          // Extent.union devuelve una nueva extensión que engloba ambas
+          unionExtent = unionExtent.union(entry.extent);
+        }
+      }
+    }
+    if (unionExtent) {
+      try {
+        await view.goTo({ target: unionExtent, padding: 50 });
+      } catch (err) {
+        console.error("Error al centrar vista:", err);
+      }
+    } else {
+      window.alert("No hay capas visibles con extensión válida para centrar.");
+    }
+  };
+
   return (
     <div>
-      {/* Spinner CSS keyframes */}
+      {/* CSS spinner */}
       <style>
         {`
         @keyframes spin {
@@ -408,7 +444,7 @@ const App = () => {
         `}
       </style>
 
-      {/* Hidden file input: allow multiple selection */}
+      {/* Input oculto para múltiples archivos */}
       <input
         type="file"
         accept=".zip"
@@ -420,8 +456,6 @@ const App = () => {
           if (files && files.length > 0) {
             setLoading(true);
             (async () => {
-              // For each file, await sequentially or in parallel
-              // Here parallel: Promise.all
               await Promise.all(
                 Array.from(files).map((file) => handleFileOpen(file))
               );
@@ -432,7 +466,7 @@ const App = () => {
         }}
       />
 
-      {/* Top menu */}
+      {/* Menú superior */}
       <div
         style={{
           backgroundColor: "#f0f0f0",
@@ -504,7 +538,7 @@ const App = () => {
         </div>
       </div>
 
-      {/* Loading overlay with label and spinner */}
+      {/* Overlay de carga con label y spinner */}
       {loading && (
         <div
           style={{
@@ -551,11 +585,12 @@ const App = () => {
         </div>
       )}
 
-      {/* Selected count display: only when non-zero */}
+      {/* Conteo de seleccionados */}
       {selectedCount > 0 && (
         <div
           style={{
             position: "absolute",
+            bottom : 10,
             top: 10,
             right: 10,
             backgroundColor: "white",
@@ -570,12 +605,12 @@ const App = () => {
         </div>
       )}
 
-      {/* Layer selector panel on right */}
+      {/* Panel de capas en el lado izquierdo */}
       <div
         style={{
           position: "absolute",
-          top: 60,
-          right: 10,
+          bottom: 60,
+          left: 10,
           backgroundColor: "white",
           padding: "10px",
           border: "1px solid #ccc",
@@ -610,9 +645,21 @@ const App = () => {
             No hay capas cargadas
           </div>
         )}
+        {/* Botón de centrar capas */}
+        <button
+          style={{
+            marginTop: "10px",
+            width: "100%",
+            padding: "6px",
+            cursor: "pointer",
+          }}
+          onClick={handleCenterView}
+        >
+          Centrar capas
+        </button>
       </div>
 
-      {/* Map container */}
+      {/* Contenedor del mapa */}
       <div style={{ height: "calc(100vh - 37px)" }} ref={mapDiv}></div>
     </div>
   );
