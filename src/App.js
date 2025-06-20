@@ -1,52 +1,38 @@
+// src/App.js
 import React, { useEffect, useRef, useState } from "react";
 import MapView from "@arcgis/core/views/MapView";
 import Map from "@arcgis/core/Map";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import Extent from "@arcgis/core/geometry/Extent";
 import Graphic from "@arcgis/core/Graphic";
+import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 import "@arcgis/core/assets/esri/themes/light/main.css";
-import shp from "shpjs";
+import shpjs from "shpjs";
 
 const App = () => {
+  // Refs y estados
   const mapDiv = useRef(null);
   const viewRef = useRef(null);
   const fileInputRef = useRef(null);
-
-  // State para múltiples capas
   const [layers, setLayers] = useState([]);
-  // Ref para reflejar layers en event listeners
   const layersRef = useRef([]);
-  // Contador único de IDs de capa
   const layerIdRef = useRef(0);
-
-  // Ref para el handle de drag
   const dragHandleRef = useRef(null);
-
-  // Estado de loading
   const [loading, setLoading] = useState(false);
-
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
-  // State para el número de seleccionados total
   const [selectedCount, setSelectedCount] = useState(0);
 
-  // Cerrar menú al hacer click fuera
+  // Sincronizar layersRef con el estado
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
+    layersRef.current = layers;
+  }, [layers]);
 
-  // Inicializar mapa una sola vez
+  // Inicializar mapa y box-selection
   useEffect(() => {
     if (!mapDiv.current) return;
-
     const map = new Map({ basemap: "streets-vector" });
     const view = new MapView({
       container: mapDiv.current,
@@ -56,135 +42,118 @@ const App = () => {
     });
     viewRef.current = view;
 
-    // Quitar controles de zoom predeterminados
     view.when(() => {
+      // Quitar widget de zoom predeterminado
       view.ui.remove("zoom");
-    });
 
-    // Adjuntar SHIFT+drag box selection
-    view.when(() => {
-      if (dragHandleRef.current) {
-        return;
-      }
-      let dragOrigin = null;
-      let boxGraphic = null;
-
-      const dragHandle = view.on("drag", async (event) => {
-        if (event.button === 0 && event.native.shiftKey) {
-          event.stopPropagation();
-          if (event.action === "start") {
-            dragOrigin = [event.x, event.y];
-            const p = view.toMap({ x: event.x, y: event.y });
-            const initRings = [
-              [p.x, p.y],
-              [p.x, p.y],
-              [p.x, p.y],
-              [p.x, p.y],
-              [p.x, p.y],
-            ];
-            boxGraphic = new Graphic({
-              geometry: {
-                type: "polygon",
-                rings: [initRings],
-                spatialReference: view.spatialReference,
-              },
-              symbol: {
-                type: "simple-fill",
-                color: [0, 255, 255, 0.2], // cyan semitransparente
-                outline: {
-                  color: [0, 0, 255, 1], // borde azul
-                  width: 2,
+      // Adjuntar SHIFT+drag box selection solo una vez
+      if (!dragHandleRef.current) {
+        let dragOrigin = null;
+        let boxGraphic = null;
+        const dragHandle = view.on("drag", async (event) => {
+          if (event.button === 0 && event.native.shiftKey) {
+            event.stopPropagation();
+            if (event.action === "start") {
+              dragOrigin = [event.x, event.y];
+              const p = view.toMap({ x: event.x, y: event.y });
+              const initRings = [
+                [p.x, p.y],
+                [p.x, p.y],
+                [p.x, p.y],
+                [p.x, p.y],
+                [p.x, p.y],
+              ];
+              boxGraphic = new Graphic({
+                geometry: {
+                  type: "polygon",
+                  rings: [initRings],
+                  spatialReference: view.spatialReference,
                 },
-              },
-            });
-            view.graphics.add(boxGraphic);
-          } else if (event.action === "update" && dragOrigin) {
-            const [x0, y0] = dragOrigin;
-            const x1 = event.x,
-              y1 = event.y;
-            const p1 = view.toMap({ x: x0, y: y0 });
-            const p2 = view.toMap({ x: x1, y: y1 });
-            const xmin = Math.min(p1.x, p2.x);
-            const xmax = Math.max(p1.x, p2.x);
-            const ymin = Math.min(p1.y, p2.y);
-            const ymax = Math.max(p1.y, p2.y);
-            const rings = [
-              [xmin, ymin],
-              [xmin, ymax],
-              [xmax, ymax],
-              [xmax, ymin],
-              [xmin, ymin],
-            ];
-            if (boxGraphic) {
-              boxGraphic.geometry = {
-                type: "polygon",
-                rings: [rings],
+                symbol: {
+                  type: "simple-fill",
+                  color: [0, 255, 255, 0.2],
+                  outline: { color: [0, 0, 255, 1], width: 2 },
+                },
+              });
+              view.graphics.add(boxGraphic);
+            } else if (event.action === "update" && dragOrigin) {
+              const [x0, y0] = dragOrigin;
+              const [x1, y1] = [event.x, event.y];
+              const p1 = view.toMap({ x: x0, y: y0 });
+              const p2 = view.toMap({ x: x1, y: y1 });
+              const xmin = Math.min(p1.x, p2.x);
+              const xmax = Math.max(p1.x, p2.x);
+              const ymin = Math.min(p1.y, p2.y);
+              const ymax = Math.max(p1.y, p2.y);
+              const rings = [
+                [xmin, ymin],
+                [xmin, ymax],
+                [xmax, ymax],
+                [xmax, ymin],
+                [xmin, ymin],
+              ];
+              if (boxGraphic) {
+                boxGraphic.geometry = {
+                  type: "polygon",
+                  rings: [rings],
+                  spatialReference: view.spatialReference,
+                };
+              }
+            } else if (event.action === "end" && dragOrigin) {
+              const [x0, y0] = dragOrigin;
+              const [x1, y1] = [event.x, event.y];
+              if (boxGraphic) {
+                view.graphics.remove(boxGraphic);
+                boxGraphic = null;
+              }
+              const p1 = view.toMap({ x: x0, y: y0 });
+              const p2 = view.toMap({ x: x1, y: y1 });
+              const queryExt = new Extent({
+                xmin: Math.min(p1.x, p2.x),
+                ymin: Math.min(p1.y, p2.y),
+                xmax: Math.max(p1.x, p2.x),
+                ymax: Math.max(p1.y, p2.y),
                 spatialReference: view.spatialReference,
-              };
-            }
-          } else if (event.action === "end" && dragOrigin) {
-            const [x0, y0] = dragOrigin;
-            const x1 = event.x,
-              y1 = event.y;
-            if (boxGraphic) {
-              view.graphics.remove(boxGraphic);
-              boxGraphic = null;
-            }
-            const p1 = view.toMap({ x: x0, y: y0 });
-            const p2 = view.toMap({ x: x1, y: y1 });
-            const queryExt = new Extent({
-              xmin: Math.min(p1.x, p2.x),
-              ymin: Math.min(p1.y, p2.y),
-              xmax: Math.max(p1.x, p2.x),
-              ymax: Math.max(p1.y, p2.y),
-              spatialReference: view.spatialReference,
-            });
+              });
 
-            // Query y actualizar selección en cada capa visible
-            let total = 0;
-            const currentLayers = layersRef.current;
-            for (let entry of currentLayers) {
-              const { layerView, visible, highlightHandle } = entry;
-              if (visible && layerView) {
-                try {
-                  const query = layerView.createQuery();
-                  query.geometry = queryExt;
-                  // Por defecto spatialRelationship intersecta
-                  const result = await layerView.queryFeatures(query);
-                  // Extraemos OBJECTIDs seleccionados
-                  const ids = result.features.map(f => f.attributes.OBJECTID);
-                  entry.selectedIds = ids; // actualizamos selección interna
-                  // Removemos highlight previo
-                  if (highlightHandle) {
-                    highlightHandle.remove();
+              // Query & resaltar en cada capa visible
+              let total = 0;
+              for (let entry of layersRef.current) {
+                const { layerView, visible, highlightHandle } = entry;
+                if (visible && layerView) {
+                  try {
+                    const q = layerView.createQuery();
+                    q.geometry = queryExt;
+                    const result = await layerView.queryFeatures(q);
+                    const ids = result.features.map((f) => f.attributes.OBJECTID);
+                    entry.selectedIds = ids;
+                    if (highlightHandle) {
+                      highlightHandle.remove();
+                    }
+                    if (ids.length) {
+                      entry.highlightHandle = layerView.highlight(result.features);
+                    } else {
+                      entry.highlightHandle = null;
+                    }
+                    total += ids.length;
+                  } catch (err) {
+                    console.error("Error en box-selection:", err);
                   }
-                  // Highlight de las features seleccionadas
-                  if (ids.length > 0) {
-                    // Podemos resaltar directamente result.features
-                    entry.highlightHandle = layerView.highlight(result.features);
-                  } else {
+                } else {
+                  if (entry.highlightHandle) {
+                    entry.highlightHandle.remove();
                     entry.highlightHandle = null;
                   }
-                  total += ids.length;
-                } catch (err) {
-                  console.error("Error querying layer in box selection:", err);
+                  entry.selectedIds = [];
                 }
-              } else {
-                // no visible o layerView no listo: limpiamos highlight y selectedIds
-                if (entry.highlightHandle) {
-                  entry.highlightHandle.remove();
-                  entry.highlightHandle = null;
-                }
-                entry.selectedIds = [];
               }
+              setSelectedCount(total);
+              dragOrigin = null;
             }
-            setSelectedCount(total);
-            dragOrigin = null;
           }
-        }
-      });
-
-      dragHandleRef.current = dragHandle;
+        });
+        dragHandleRef.current = dragHandle;
+      }
     });
 
     return () => {
@@ -199,78 +168,66 @@ const App = () => {
     };
   }, []);
 
-  // Reflejar layers state en layersRef
-  useEffect(() => {
-    layersRef.current = layers;
-  }, [layers]);
-
-  // Lógica para CTRL+click acumulativo
+  // CTRL+click para selección acumulativa
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-
     const handleCtrlClick = async (event) => {
       if (!event.native.ctrlKey) return;
-      // Hit test para obtener gráfico bajo cursor
       const hit = await view.hitTest(event);
       if (!hit.results.length) return;
-      // Encontrar el resultado cuyo layerView corresponda a alguna de nuestras capas
-      const result = hit.results.find(r =>
-        layersRef.current.some(entry => entry.layerView && r.graphic.layer === entry.layer)
+      const result = hit.results.find((r) =>
+        layersRef.current.some(
+          (entry) => entry.layerView && r.graphic.layer === entry.layer
+        )
       );
       if (!result) return;
       const graphic = result.graphic;
-      const layer = result.graphic.layer;
-      // Encontrar entry correspondiente
-      const entry = layersRef.current.find(e => e.layer === layer);
+      const layer = graphic.layer;
+      const entry = layersRef.current.find((e) => e.layer === layer);
       if (!entry) return;
       const oid = graphic.getAttribute("OBJECTID");
       if (oid == null) return;
-      // Toggle en entry.selectedIds
       const prevIds = entry.selectedIds || [];
       let newIds;
       if (prevIds.includes(oid)) {
-        newIds = prevIds.filter(id => id !== oid);
+        newIds = prevIds.filter((id) => id !== oid);
       } else {
         newIds = [...prevIds, oid];
       }
       entry.selectedIds = newIds;
-      // Actualizar highlight en esa capa:
+      // Actualizar highlight
       if (entry.highlightHandle) {
         entry.highlightHandle.remove();
         entry.highlightHandle = null;
       }
-      if (newIds.length > 0) {
-        // Query las features seleccionadas por OBJECTID
+      if (newIds.length) {
         try {
-          const query = entry.layerView.createQuery();
-          query.objectIds = newIds;
-          query.returnGeometry = true;
-          const resultSel = await entry.layerView.queryFeatures(query);
+          const q = entry.layerView.createQuery();
+          q.objectIds = newIds;
+          q.returnGeometry = true;
+          const resultSel = await entry.layerView.queryFeatures(q);
           if (resultSel.features.length) {
             entry.highlightHandle = entry.layerView.highlight(resultSel.features);
           }
         } catch (err) {
-          console.error("Error querying selected features by OBJECTID:", err);
+          console.error("Error en CTRL+click selection:", err);
         }
       }
-      // Recalcular selectedCount total de todas las capas:
+      // Recalcular total
       let total = 0;
       for (let e of layersRef.current) {
-        if (Array.isArray(e.selectedIds)) {
-          total += e.selectedIds.length;
-        }
+        if (Array.isArray(e.selectedIds)) total += e.selectedIds.length;
       }
       setSelectedCount(total);
     };
-
     view.on("click", handleCtrlClick);
     return () => {
       view.off("click", handleCtrlClick);
     };
   }, []);
 
-  // Util: convertir geometría GeoJSON a ArcGIS
+  // Conversión GeoJSON -> ArcGIS geometry para carga
   const convertGeometry = (geo) => {
     const type = geo.type.toLowerCase();
     switch (type) {
@@ -281,12 +238,12 @@ const App = () => {
       case "polygon":
         return { type: "polygon", rings: geo.coordinates };
       default:
-        console.warn("Tipo no soportado:", type);
+        console.warn("Tipo no soportado en convertGeometry:", type);
         return null;
     }
   };
 
-  // Helper: generar color distinto según índice de capa
+  // Generar color distintivo por índice
   const generateColorForIndex = (index) => {
     const hue = (index * 60) % 360;
     const saturation = 70;
@@ -315,29 +272,23 @@ const App = () => {
     return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
   };
 
-  // Cargar shapefile ZIP
+  // Cargar shapefile ZIP usando shpjs
   const handleFileOpen = async (file) => {
     if (!file || !viewRef.current) return;
     const view = viewRef.current;
-
-    // Reservar ID de capa antes de operaciones async
-    const newId = layerIdRef.current;
-    layerIdRef.current += 1;
-
-    // Derive nombre y verificar duplicado
+    const newId = layerIdRef.current++;
     const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-    const exists = layersRef.current.some(
-      (entry) => entry.name === nameWithoutExt
-    );
-    if (exists) {
+    if (layersRef.current.some((e) => e.name === nameWithoutExt)) {
       window.alert("No puedes cargar dos veces la misma capa");
       return;
     }
-
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const geojson = await shp(arrayBuffer);
-
+      const geojson = await shpjs(arrayBuffer);
+      if (!geojson || !geojson.features?.length) {
+        console.warn("No valid features found in shapefile:", file.name);
+        return;
+      }
       const features = geojson.features
         .map((f, i) => {
           const geometry = convertGeometry(f.geometry);
@@ -346,40 +297,64 @@ const App = () => {
             : null;
         })
         .filter(Boolean);
-
-      if (features.length === 0) {
-        console.warn("No valid features found in the shapefile:", file.name);
+      if (!features.length) {
+        console.warn("No valid features after conversion:", file.name);
         return;
       }
-
-      // Campos dinámicos
-      const firstProps = geojson.features[0]?.properties || {};
-      const dynamicFields = Object.keys(firstProps).map((key) => ({
-        name: key,
-        alias: key,
-        type: "string",
-      }));
-
-      // Generar color
+      
+      // Extraer propiedades de la primera feature para crear dynamicFields
+      const firstFeature = geojson.features[0];
+      const firstProps = firstFeature?.properties || {};
+      
+      // Crear dynamicFields con detección de tipo
+      const dynamicFields = Object.entries(firstProps).map(([name, value]) => {
+        let type;
+        if (typeof value === 'number') {
+          type = 'double';
+        } else if (typeof value === 'boolean') {
+          type = 'boolean';
+        } else if (value instanceof Date) {
+          type = 'date';
+        } else {
+          type = 'string';
+        }
+        
+        return {
+          name,
+          alias: name,
+          type
+        };
+      });
+      
       const [r, g, b] = generateColorForIndex(newId);
       const fillColor = [r, g, b, 0.3];
       const outlineColor = [r, g, b, 1];
+      
+      // Detectar geometryType dinámicamente
+      const geometryType = geojson.features[0]?.geometry?.type === "Point" 
+        ? "point" 
+        : geojson.features[0]?.geometry?.type === "LineString" 
+          ? "polyline" 
+          : "polygon";
 
       const featureLayer = new FeatureLayer({
         source: features,
         objectIdField: "OBJECTID",
-        geometryType: "polygon",
+        geometryType,
         spatialReference: { wkid: 4326 },
         fields: [
           { name: "OBJECTID", alias: "OBJECTID", type: "oid" },
-          ...dynamicFields,
+          ...dynamicFields
         ],
         renderer: {
           type: "simple",
           symbol: {
-            type: "simple-fill",
-            color: fillColor,
-            outline: { color: outlineColor, width: 2 },
+            type: geometryType === "point" ? "simple-marker" : 
+                  geometryType === "polyline" ? "simple-line" : "simple-fill",
+            color: geometryType === "point" ? [r, g, b] : fillColor,
+            outline: geometryType === "polygon" ? { color: outlineColor, width: 2 } : null,
+            size: geometryType === "point" ? "8px" : null,
+            width: geometryType === "polyline" ? 2 : null
           },
         },
         popupTemplate: {
@@ -387,84 +362,77 @@ const App = () => {
           content: [
             {
               type: "fields",
-              fieldInfos: dynamicFields.map((f) => ({
-                fieldName: f.name,
-              })),
+              fieldInfos: [
+                { fieldName: "OBJECTID", label: "OBJECTID" },
+                ...dynamicFields.map(f => ({ fieldName: f.name, label: f.alias }))
+              ],
             },
           ],
         },
       });
-
+      
       view.map.add(featureLayer);
       await featureLayer.when();
-
-      // Zoom a la extensión
       const extentResult = await featureLayer.queryExtent();
       if (extentResult?.extent) {
         await view.goTo({ target: extentResult.extent, padding: 50 });
       }
-
       const layerView = await view.whenLayerView(featureLayer);
-
+      
+      // Guardar dynamicFields con la entrada de la capa
       const newEntry = {
         id: newId,
         name: nameWithoutExt || `Layer ${newId}`,
         layer: featureLayer,
-        layerView: layerView,
+        layerView,
         visible: true,
         highlightHandle: null,
-        selectedIds: [],            // inicialmente sin selección
+        selectedIds: [],
         extent: extentResult?.extent || null,
+        dynamicFields: dynamicFields  // Almacenar campos dinámicos
       };
       setLayers((prev) => [...prev, newEntry]);
-    } catch (error) {
-      console.error("Error processing shapefile:", file.name, error);
+    } catch (err) {
+      console.error("Error processing shapefile:", file.name, err);
+      window.alert("Error al procesar shapefile: " + err.message);
     }
   };
 
-  // Toggle visibilidad de capa
+  // Toggle visibilidad
   const toggleLayerVisibility = (id) => {
     setLayers((prev) =>
       prev.map((entry) => {
         if (entry.id === id) {
           const newVis = !entry.visible;
-          if (entry.layer) {
-            entry.layer.visible = newVis;
-          }
+          if (entry.layer) entry.layer.visible = newVis;
           if (!newVis && entry.highlightHandle) {
             entry.highlightHandle.remove();
             entry.highlightHandle = null;
           }
-          // Si ocultamos capa, limpiamos selección interna:
-          if (!newVis) {
-            entry.selectedIds = [];
-          }
+          if (!newVis) entry.selectedIds = [];
           return { ...entry, visible: newVis };
         }
         return entry;
       })
     );
-    // Recalcular selectedCount en caso de cambios:
+    // Recalcular total:
     let total = 0;
-    layersRef.current.forEach(e => {
+    layersRef.current.forEach((e) => {
       if (Array.isArray(e.selectedIds)) total += e.selectedIds.length;
     });
     setSelectedCount(total);
   };
 
-  // Limpiar mapa con confirmación
+  // Limpiar mapa
   const handleClearMap = () => {
     const confirmed = window.confirm(
       "¿Estás seguro de que quieres limpiar todas las capas del mapa?"
     );
     if (!confirmed) return;
-
     const view = viewRef.current;
     if (view) {
       for (let entry of layersRef.current) {
-        if (entry.layer) {
-          view.map.remove(entry.layer);
-        }
+        if (entry.layer) view.map.remove(entry.layer);
         if (entry.highlightHandle) {
           entry.highlightHandle.remove();
           entry.highlightHandle = null;
@@ -477,39 +445,30 @@ const App = () => {
     setMenuOpen(false);
   };
 
+  // Cerrar app
   const handleCloseApp = () => {
     const confirmed = window.confirm(
-    "¿Estás seguro de que quieres cerrar la aplicación?\n" +
-    "Los cambios no guardados se perderán"
-  );
-  if (confirmed) {
-    window.close();
-  }
-  setMenuOpen(false);
+      "¿Estás seguro de que quieres cerrar la aplicación?\nLos cambios no guardados se perderán"
+    );
+    if (confirmed) window.close();
+    setMenuOpen(false);
   };
 
+  const toggleMenu = () => setMenuOpen(!menuOpen);
   const triggerFileInput = () => {
     fileInputRef.current.click();
     setMenuOpen(false);
   };
 
-  const toggleMenu = () => {
-    setMenuOpen(!menuOpen);
-  };
-
-  // Centrar vista al extent combinado de capas visibles
+  // Centrar vista
   const handleCenterView = async () => {
     const view = viewRef.current;
     if (!view) return;
-    const currentLayers = layersRef.current;
     let unionExtent = null;
-    for (let entry of currentLayers) {
+    for (let entry of layersRef.current) {
       if (entry.visible && entry.extent) {
-        if (!unionExtent) {
-          unionExtent = entry.extent;
-        } else {
-          unionExtent = unionExtent.union(entry.extent);
-        }
+        if (!unionExtent) unionExtent = entry.extent;
+        else unionExtent = unionExtent.union(entry.extent);
       }
     }
     if (unionExtent) {
@@ -523,19 +482,136 @@ const App = () => {
     }
   };
 
+  // Exportar capa a GeoJSON
+  const exportLayerAsGeoJSON = async (entry) => {
+    const layerView = entry.layerView;
+    if (!layerView) {
+      window.alert("La capa no está lista para exportar.");
+      return;
+    }
+    try {
+      // Query con todos los campos
+      const query = layerView.createQuery();
+      query.where = "1=1";
+      query.returnGeometry = true;
+      query.outFields = ["*"];
+      const result = await layerView.queryFeatures(query);
+      const featuresArcGIS = result.features;
+      
+      if (!featuresArcGIS.length) {
+        window.alert("La capa no tiene features para exportar.");
+        return;
+      }
+
+      // Construir GeoJSON features
+      const geojsonFeatures = [];
+      for (let feat of featuresArcGIS) {
+        let geom = feat.geometry;
+        if (!geom) continue;
+
+        // Transformar WebMercator a Geographic si hace falta
+        try {
+          if (geom.spatialReference && geom.spatialReference.isWebMercator) {
+            geom = webMercatorToGeographic(geom);
+          }
+        } catch (e) {
+          console.warn("No se pudo transformar geom:", e);
+        }
+
+        // Convertir geom a GeoJSON manualmente
+        let geojsonGeom = null;
+        try {
+          switch (geom.type) {
+            case "point":
+              geojsonGeom = { type: "Point", coordinates: [geom.x, geom.y] };
+              break;
+            case "polyline":
+              if (geom.paths.length === 1) {
+                geojsonGeom = { type: "LineString", coordinates: geom.paths[0] };
+              } else {
+                geojsonGeom = { type: "MultiLineString", coordinates: geom.paths };
+              }
+              break;
+            case "polygon":
+              geojsonGeom = { type: "Polygon", coordinates: geom.rings };
+              break;
+            default:
+              console.warn("Geom no soportada:", geom.type);
+              continue;
+          }
+        } catch (e) {
+          console.warn("Error convirtiendo geom:", e);
+          continue;
+        }
+
+        // Construir propiedades usando todos los campos
+        const props = { ...feat.attributes };
+
+        geojsonFeatures.push({ 
+          type: "Feature", 
+          geometry: geojsonGeom, 
+          properties: props 
+        });
+      }
+
+      if (!geojsonFeatures.length) {
+        window.alert("No hay features válidas para exportar.");
+        return;
+      }
+
+      const geojsonFC = { 
+        type: "FeatureCollection", 
+        features: geojsonFeatures 
+      };
+
+      // Crear y descargar GeoJSON
+      const geojsonString = JSON.stringify(geojsonFC, null, 2);
+      const blob = new Blob([geojsonString], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${entry.name}.geojson`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+    } catch (err) {
+      console.error("Error en exportLayerAsGeoJSON:", err);
+      window.alert("Error al exportar GeoJSON: " + err.message);
+    }
+  };
+
+  // Handler "Guardar como"
+  const handleGuardarComo = () => {
+    if (layers.length === 0) {
+      window.alert("No hay capas cargadas para guardar.");
+      return;
+    }
+    const opciones = layers.map((e, idx) => `${idx}: ${e.name}`).join("\n");
+    const texto =
+      "Seleccione el índice de la capa a guardar (ejemplo: 0):\n" + opciones;
+    const respuesta = window.prompt(texto);
+    if (respuesta == null) return;
+    const idx = parseInt(respuesta, 10);
+    if (isNaN(idx) || idx < 0 || idx >= layers.length) {
+      window.alert("Índice inválido.");
+      return;
+    }
+    exportLayerAsGeoJSON(layers[idx]);
+  };
+
   return (
     <div>
       {/* CSS spinner */}
-      <style>
-        {`
+      <style>{`
         @keyframes spin {
           0% { transform: rotate(0deg); }
           100% { transform: rotate(360deg); }
         }
-        `}
-      </style>
+      `}</style>
 
-      {/* Input oculto para múltiples archivos */}
+      {/* Input oculto para shapefiles ZIP */}
       <input
         type="file"
         accept=".zip"
@@ -544,11 +620,11 @@ const App = () => {
         style={{ display: "none" }}
         onChange={(e) => {
           const files = e.target.files;
-          if (files && files.length > 0) {
+          if (files && files.length) {
             setLoading(true);
             (async () => {
               await Promise.all(
-                Array.from(files).map((file) => handleFileOpen(file))
+                Array.from(files).map((f) => handleFileOpen(f))
               );
               setLoading(false);
             })();
@@ -591,19 +667,19 @@ const App = () => {
               }}
             >
               <div
-                style={{
-                  padding: "5px 10px",
-                  cursor: "pointer",
-                }}
+                style={{ padding: "5px 10px", cursor: "pointer" }}
                 onClick={triggerFileInput}
               >
                 Abrir nuevo
               </div>
               <div
-                style={{
-                  padding: "5px 10px",
-                  cursor: "pointer",
-                }}
+                style={{ padding: "5px 10px", cursor: "pointer" }}
+                onClick={handleGuardarComo}
+              >
+                Guardar como
+              </div>
+              <div
+                style={{ padding: "5px 10px", cursor: "pointer" }}
                 onClick={handleClearMap}
               >
                 Limpiar mapa
@@ -616,10 +692,7 @@ const App = () => {
                 }}
               ></div>
               <div
-                style={{
-                  padding: "5px 10px",
-                  cursor: "pointer",
-                }}
+                style={{ padding: "5px 10px", cursor: "pointer" }}
                 onClick={handleCloseApp}
               >
                 Cerrar
@@ -629,7 +702,7 @@ const App = () => {
         </div>
       </div>
 
-      {/* Overlay de carga con label y spinner */}
+      {/* Overlay de carga */}
       {loading && (
         <div
           style={{
@@ -676,7 +749,7 @@ const App = () => {
         </div>
       )}
 
-      {/* Conteo de seleccionados, con botón “Deseleccionar todo” */}
+      {/* Conteo de seleccionados con "Deseleccionar todo" */}
       {selectedCount > 0 && (
         <div
           style={{
@@ -696,8 +769,7 @@ const App = () => {
           <button
             style={{ padding: "4px 8px", cursor: "pointer" }}
             onClick={() => {
-              // Deseleccionar todo:
-              layersRef.current.forEach(entry => {
+              layersRef.current.forEach((entry) => {
                 if (entry.highlightHandle) {
                   entry.highlightHandle.remove();
                   entry.highlightHandle = null;
@@ -712,7 +784,7 @@ const App = () => {
         </div>
       )}
 
-      {/* Panel de capas en el lado izquierdo */}
+      {/* Panel de capas en lado izquierdo */}
       <div
         style={{
           position: "absolute",
@@ -752,7 +824,6 @@ const App = () => {
             No hay capas cargadas
           </div>
         )}
-        {/* Botón de centrar capas */}
         <button
           style={{
             marginTop: "10px",
