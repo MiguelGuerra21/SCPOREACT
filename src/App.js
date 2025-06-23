@@ -8,10 +8,7 @@ import Graphic from "@arcgis/core/Graphic";
 import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
 import "@arcgis/core/assets/esri/themes/light/main.css";
 import shpjs from "shpjs"; // para leer shapefiles
-import JSZip from "jszip";
 import { saveAs } from "file-saver";
-// Import correcto de conversión ArcGIS JSON -> GeoJSON
-import { arcgisToGeoJSON } from "@esri/arcgis-to-geojson-utils";
 
 const App = () => {
   // Refs y estados
@@ -488,7 +485,7 @@ const App = () => {
 
   
 
-  const exportLayerAsShapefile = ({ layer, fileName = "shpexportado" }) => {
+  const exportLayerAsShapefile = ({ layer, fileName = "exportado" }) => {
     const exportSHP = async () => {
       if (!layer) {
         alert("No hay capa para exportar.");
@@ -502,7 +499,6 @@ const App = () => {
         alert("No hay entidades válidas para exportar.");
         return;
       }
-      debugger;
 
       try {
         const zipBlob = await window.shpwrite.zip(geojson, {
@@ -585,7 +581,7 @@ const App = () => {
       window.alert("Índice inválido.");
       return;
     }
-    exportLayerAsShapefile(layers[idx]);
+    exportLayerAsShapefile(layers[idx] , layers[idx].name);
   };
 
   // (Opcional) Exportar como GeoJSON
