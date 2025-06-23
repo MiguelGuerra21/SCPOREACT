@@ -583,7 +583,7 @@ const App = () => {
   };
 
   // Handler "Guardar como"
-  const handleGuardarComo = () => {
+  const handleGuardarComoGEOJson = () => {
     if (layers.length === 0) {
       window.alert("No hay capas cargadas para guardar.");
       return;
@@ -599,6 +599,25 @@ const App = () => {
       return;
     }
     exportLayerAsGeoJSON(layers[idx]);
+  };
+
+  // Handler "Guardar como"
+  const handleGuardarComoShapefile = () => {
+    if (layers.length === 0) {
+      window.alert("No hay capas cargadas para guardar.");
+      return;
+    }
+    const opciones = layers.map((e, idx) => `${idx}: ${e.name}`).join("\n");
+    const texto =
+      "Seleccione el índice de la capa a guardar (ejemplo: 0):\n" + opciones;
+    const respuesta = window.prompt(texto);
+    if (respuesta == null) return;
+    const idx = parseInt(respuesta, 10);
+    if (isNaN(idx) || idx < 0 || idx >= layers.length) {
+      window.alert("Índice inválido.");
+      return;
+    }
+    exportLayerAsShapefile(layers[idx]);
   };
 
   return (
@@ -674,9 +693,15 @@ const App = () => {
               </div>
               <div
                 style={{ padding: "5px 10px", cursor: "pointer" }}
-                onClick={handleGuardarComo}
+                onClick={handleGuardarComoShapefile}
               >
-                Guardar como
+                Exportar como Shapefile...
+              </div>
+              <div
+                style={{ padding: "5px 10px", cursor: "pointer" }}
+                onClick={handleGuardarComoGEOJson}
+              >
+                Exportar como GEOJson...
               </div>
               <div
                 style={{ padding: "5px 10px", cursor: "pointer" }}
