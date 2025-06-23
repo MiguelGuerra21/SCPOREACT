@@ -6,17 +6,19 @@ import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import Extent from "@arcgis/core/geometry/Extent";
 import Graphic from "@arcgis/core/Graphic";
 import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
+import "@arcgis/core/assets/esri/themes/light/main.css";
+import shpjs from "shpjs"; // para leer shapefiles
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
-import "@arcgis/core/assets/esri/themes/light/main.css";
-import shpjs from "shpjs";
+// Import correcto de conversión ArcGIS JSON -> GeoJSON
+import { arcgisToGeoJSON } from "@esri/arcgis-to-geojson-utils";
 
 const App = () => {
   // Refs y estados
   const mapDiv = useRef(null);
   const viewRef = useRef(null);
   const fileInputRef = useRef(null);
-  const [layers, setLayers] = useState([]); // entries: { id, name, layer, layerView, visible, highlightHandle, selectedIds, extent, dynamicFields }
+  const [layers, setLayers] = useState([]); // array de entradas de capa
   const layersRef = useRef([]);
   const layerIdRef = useRef(0);
   const dragHandleRef = useRef(null);
@@ -43,10 +45,10 @@ const App = () => {
     viewRef.current = view;
 
     view.when(() => {
-      // Quitar widget de zoom predeterminado
+      // Quitar widget de zoom
       view.ui.remove("zoom");
 
-      // Adjuntar SHIFT+drag box selection solo una vez
+      // Box-selection con SHIFT+drag
       if (!dragHandleRef.current) {
         let dragOrigin = null;
         let boxGraphic = null;
@@ -115,8 +117,7 @@ const App = () => {
                 ymax: Math.max(p1.y, p2.y),
                 spatialReference: view.spatialReference,
               });
-
-              // Query & resaltar en cada capa visible
+              // Query y resaltar en cada capa visible
               let total = 0;
               for (let entry of layersRef.current) {
                 const { layerView, visible, highlightHandle } = entry;
@@ -229,6 +230,7 @@ const App = () => {
 
   // Conversión GeoJSON -> ArcGIS geometry para carga
   const convertGeometry = (geo) => {
+    if (!geo) return null;
     const type = geo.type.toLowerCase();
     switch (type) {
       case "point":
@@ -243,7 +245,7 @@ const App = () => {
     }
   };
 
-  // Generar color distintivo por índice
+  // Color distintivo
   const generateColorForIndex = (index) => {
     const hue = (index * 60) % 360;
     const saturation = 70;
@@ -272,7 +274,7 @@ const App = () => {
     return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
   };
 
-  // Cargar shapefile ZIP usando shpjs
+  // Cargar shapefile con shpjs y crear FeatureLayer
   const handleFileOpen = async (file) => {
     if (!file || !viewRef.current) return;
     const view = viewRef.current;
@@ -289,7 +291,7 @@ const App = () => {
         console.warn("No valid features found in shapefile:", file.name);
         return;
       }
-      // Convertir a objetos { geometry, attributes }
+      // Convertir features a source de ArcGIS
       const features = geojson.features
         .map((f, i) => {
           const geometry = convertGeometry(f.geometry);
@@ -302,12 +304,9 @@ const App = () => {
         console.warn("No valid features after conversion:", file.name);
         return;
       }
-
-      // Extraer propiedades de la primera feature para crear dynamicFields
-      const firstFeature = geojson.features[0];
-      const firstProps = firstFeature?.properties || {};
-      // Crear dynamicFields con detección sencilla de tipo
-      const dynamicFields = Object.entries(firstProps).map(([name, value]) => {
+      // Crear dynamicFields según primera feature
+      const firstProps = geojson.features[0]?.properties || {};
+      const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
         let type;
         if (typeof value === "number") {
           type = "double";
@@ -319,31 +318,30 @@ const App = () => {
           type = "string";
         }
         return {
-          name,
-          alias: name,
+          name: key,
+          alias: key,
           type,
         };
       });
-
       const [r, g, b] = generateColorForIndex(newId);
       const fillColor = [r, g, b, 0.3];
       const outlineColor = [r, g, b, 1];
-      // Detectar geometryType dinámicamente
-      const geomType = geojson.features[0]?.geometry?.type;
-      const geometryType =
-        geomType === "Point"
-          ? "point"
-          : geomType === "LineString"
-          ? "polyline"
-          : "polygon";
-
+      // Detectar geometryType
+      const geomType0 = geojson.features[0]?.geometry?.type;
+      let geometryType = "polygon";
+      if (geomType0 === "Point") geometryType = "point";
+      else if (
+        geomType0 === "LineString" ||
+        geomType0 === "MultiLineString"
+      )
+        geometryType = "polyline";
+      else geometryType = "polygon";
       const featureLayer = new FeatureLayer({
         source: features,
         objectIdField: "OBJECTID",
         geometryType,
         spatialReference: { wkid: 4326 },
         fields: [
-          { name: "OBJECTID", alias: "OBJECTID", type: "oid" },
           ...dynamicFields,
         ],
         renderer: {
@@ -370,7 +368,6 @@ const App = () => {
             {
               type: "fields",
               fieldInfos: [
-                { fieldName: "OBJECTID", label: "OBJECTID" },
                 ...dynamicFields.map((f) => ({
                   fieldName: f.name,
                   label: f.alias,
@@ -382,12 +379,12 @@ const App = () => {
       });
       view.map.add(featureLayer);
       await featureLayer.when();
+      // Centrar extensión
       const extentResult = await featureLayer.queryExtent();
       if (extentResult?.extent) {
         await view.goTo({ target: extentResult.extent, padding: 50 });
       }
       const layerView = await view.whenLayerView(featureLayer);
-      // Guardar dynamicFields con la entrada de la capa
       const newEntry = {
         id: newId,
         name: nameWithoutExt || `Layer ${newId}`,
@@ -397,7 +394,6 @@ const App = () => {
         highlightHandle: null,
         selectedIds: [],
         extent: extentResult?.extent || null,
-        dynamicFields,
       };
       setLayers((prev) => [...prev, newEntry]);
     } catch (err) {
@@ -406,7 +402,7 @@ const App = () => {
     }
   };
 
-  // Toggle visibilidad
+  // Toggle visibilidad capa
   const toggleLayerVisibility = (id) => {
     setLayers((prev) =>
       prev.map((entry) => {
@@ -423,7 +419,7 @@ const App = () => {
         return entry;
       })
     );
-    // Recalcular total:
+    // Recalcular total seleccionados
     let total = 0;
     layersRef.current.forEach((e) => {
       if (Array.isArray(e.selectedIds)) total += e.selectedIds.length;
@@ -468,7 +464,7 @@ const App = () => {
     setMenuOpen(false);
   };
 
-  // Centrar vista
+  // Centrar vista a la extensión combinada
   const handleCenterView = async () => {
     const view = viewRef.current;
     if (!view) return;
@@ -490,183 +486,99 @@ const App = () => {
     }
   };
 
-  // Convertir geometría ArcGIS a GeoJSON (en WGS84)
-  const convertArcGISGeometryToGeoJSON = (geom) => {
-    if (!geom) return null;
-    try {
-      if (geom.spatialReference && geom.spatialReference.isWebMercator) {
-        geom = webMercatorToGeographic(geom);
+  
+
+  const exportLayerAsShapefile = ({ layer, fileName = "shpexportado" }) => {
+    const exportSHP = async () => {
+      if (!layer) {
+        alert("No hay capa para exportar.");
+        return;
       }
-    } catch (e) {
-      console.warn("No se pudo transformar geometría:", e);
-    }
-    switch (geom.type) {
-      case "point":
-        return { type: "Point", coordinates: [geom.x, geom.y] };
-      case "polyline":
-        if (geom.paths.length === 1) {
-          return { type: "LineString", coordinates: geom.paths[0] };
-        } else {
-          return { type: "MultiLineString", coordinates: geom.paths };
+
+      const geojson = await generateGeoJSON(layer);
+      loadShpWriteFromCDN();
+
+      if (!geojson.features.length) {
+        alert("No hay entidades válidas para exportar.");
+        return;
+      }
+      debugger;
+
+      try {
+        const zipBlob = await window.shpwrite.zip(geojson, {
+          outputType: "blob"
+        });
+
+        if (!zipBlob || zipBlob.size < 100) {
+          alert("Archivo generado vacío o inválido.");
+          return;
         }
+
+        saveAs(zipBlob, `${fileName}.zip`);
+      } catch (err) {
+        console.error("Error al exportar shapefile:", err);
+        alert("Error al generar el archivo.");
+      }
+    }
+    exportSHP();
+  };
+
+  const generateGeoJSON = async (layer) => {
+    const query = layer.createQuery();
+    query.returnGeometry = true;
+    query.outFields = ["*"];
+  
+    const results = await layer.queryFeatures(query);
+  
+    return {
+      type: "FeatureCollection",
+      features: results.features
+        .map(f => ({
+          type: "Feature",
+          geometry: arcgisToGeoJSON(f.geometry),
+          properties: f.attributes
+        }))
+        .filter(f => f.geometry)
+    };
+  };
+
+  const arcgisToGeoJSON = (geometry) => {
+    if (!geometry || !geometry.type) return null;
+  
+    switch (geometry.type) {
+      case "point":
+        return { type: "Point", coordinates: [geometry.x, geometry.y] };
+      case "polyline":
+        return { type: "LineString", coordinates: geometry.paths[0] };
       case "polygon":
-        return { type: "Polygon", coordinates: geom.rings };
+        return { type: "Polygon", coordinates: geometry.rings };
       default:
-        console.warn("Tipo de geometría no soportado para export:", geom.type);
         return null;
     }
   };
 
-  // Exportar capa a Shapefile (usa shp-write en runtime + JSZip + file-saver)
-  const exportLayerAsShapefile = async (entry) => {
-    const layerView = entry.layerView;
-    if (!layerView) {
-      window.alert("La capa no está lista para exportar.");
-      return;
-    }
-    try {
-      // Query con todos los campos
-      const query = layerView.createQuery();
-      query.where = "1=1";
-      query.returnGeometry = true;
-      query.outFields = ["*"];
-      const result = await layerView.queryFeatures(query);
-      const featuresArcGIS = result.features;
-
-      if (!featuresArcGIS.length) {
-        window.alert("La capa no tiene features para exportar.");
-        return;
-      }
-
-      // Construir GeoJSON features manteniendo propiedades
-      const geojsonFeatures = [];
-      for (let feat of featuresArcGIS) {
-        const geojsonGeom = convertArcGISGeometryToGeoJSON(feat.geometry);
-        if (!geojsonGeom) continue;
-        // Conservar todas las propiedades
-        const props = { ...feat.attributes };
-        geojsonFeatures.push({
-          type: "Feature",
-          geometry: geojsonGeom,
-          properties: props,
-        });
-      }
-      if (!geojsonFeatures.length) {
-        window.alert("No hay features válidas para exportar.");
-        return;
-      }
-      const geojsonFC = {
-        type: "FeatureCollection",
-        features: geojsonFeatures,
-      };
-
-      // Nombre seguro para archivos
-      const sanitizedLayerName = entry.name
-        .replace(/[^a-zA-Z0-9]/g, "_")
-        .toLowerCase();
-
-      // Cargar shp-write UMD desde CDN si no está
-      await loadShpWriteFromCDN();
-
-      // Opciones para shapefile: types claves en mayúsculas
-      // Detectar tipo: usar la primera feature
-      const firstType = geojsonFeatures[0].geometry.type;
-      let typeKey;
-      if (firstType === "Point") typeKey = "point";
-      else if (
-        firstType === "LineString" ||
-        firstType === "MultiLineString"
-      )
-        typeKey = "line";
-      else if (firstType === "Polygon" || firstType === "MultiPolygon")
-        typeKey = "polygon";
-      else {
-        window.alert("Tipo de geometría no soportado para export: " + firstType);
-        return;
-      }
-      // Para shp-write: tipos en mayúsculas
-      const typesOption = {};
-      typesOption[typeKey] = typeKey.toUpperCase();
-
-      const options = {
-        folder: false, // poner false para que los archivos estén en la raíz del ZIP
-        types: typesOption,
-      };
-
-      // Save the zip file
-      window.shpwrite.zip(geojsonFC, {
-        outputType: "blob"
-      }).then(function(zipBlob) {
-        saveAs(zipBlob, "my_shapefile.zip");
-      });
-
-      // Generar componentes del shapefile con shp-write
-      // window.shpwrite.zip retorna un objeto con claves: '<basename>.shp', '.shx', '.dbf', etc.
-      //const shpBlobs = window.shpwrite.zip(geojsonFC, options);
-
-      // if (
-      //   !shpBlobs ||
-      //   Object.keys(shpBlobs).length === 0
-      // ) {
-      //   console.error("shpwrite.zip retornó vacío. Revisa el GeoJSON.");
-      //   window.alert("shpwrite no generó archivos. Revisa el GeoJSON pasado.");
-      //   return;
-      // }
-
-      // // Añadir .prj para WGS84 EPSG:4326
-      // const prjContent =
-      //   'GEOGCS["WGS 84",DATUM["WGS_1984",' +
-      //   'SPHEROID["WGS 84",6378137,298.257223563]],' +
-      //   'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]';
-      // shpBlobs[`${sanitizedLayerName}.prj`] = new Blob([prjContent], {
-      //   type: "text/plain",
-      // });
-      // // Añadir .cpg indicando codificación (UTF-8)
-      // const cpgContent = "UTF-8";
-      // shpBlobs[`${sanitizedLayerName}.cpg`] = new Blob([cpgContent], {
-      //   type: "text/plain",
-      // });
-
-      // // Crear ZIP con JSZip
-      // const zip = new JSZip();
-      // Object.keys(shpBlobs).forEach((filename) => {
-      //   // shpBlobs[filename] is an ArrayBuffer or Blob
-      //   zip.file(filename, shpBlobs[filename]);
-      // });
-      // const zipBlob = await zip.generateAsync({ type: "blob" });
-      // saveAs(zipBlob, `${sanitizedLayerName}_shapefile.zip`);
-    } catch (err) {
-      console.error("Error en exportLayerAsShapefile:", err);
-      window.alert("Error al exportar Shapefile: " + err.message);
-    }
-  };
-
-  // Cargar shp-write desde CDN en runtime
+  // Cargar shp-write UMD desde CDN
   const loadShpWriteFromCDN = () => {
     return new Promise((resolve, reject) => {
       if (window.shpwrite) return resolve();
       const script = document.createElement("script");
-      // Versión compatible, asegúrate que la URL funcione:
-      script.src = "https://cdn.jsdelivr.net/npm/shp-write@3.0.0/shpwrite.js";
-      script.onload = () => {
-        if (window.shpwrite) resolve();
-        else reject(new Error("shpwrite no disponible tras cargar script"));
-      };
+      script.src = "https://unpkg.com/@mapbox/shp-write@latest/shpwrite.js";
+      script.onload = () => resolve();
       script.onerror = () => reject(new Error("Failed to load shp-write"));
       document.head.appendChild(script);
     });
   };
 
-  // Handler "Guardar como Shapefile"
+  // Handler "Exportar como Shapefile"
   const handleGuardarComoShapefile = () => {
     if (layers.length === 0) {
       window.alert("No hay capas cargadas para guardar.");
       return;
     }
     const opciones = layers.map((e, idx) => `${idx}: ${e.name}`).join("\n");
-    const texto =
-      "Seleccione el índice de la capa a guardar (ejemplo: 0):\n" + opciones;
-    const respuesta = window.prompt(texto);
+    const respuesta = window.prompt(
+      "Seleccione el índice de la capa a guardar (ejemplo: 0):\n" + opciones
+    );
     if (respuesta == null) return;
     const idx = parseInt(respuesta, 10);
     if (isNaN(idx) || idx < 0 || idx >= layers.length) {
@@ -676,7 +588,7 @@ const App = () => {
     exportLayerAsShapefile(layers[idx]);
   };
 
-  // También permitir exportar a GeoJSON si se desea
+  // (Opcional) Exportar como GeoJSON
   const exportLayerAsGeoJSON = async (entry) => {
     const layerView = entry.layerView;
     if (!layerView) {
@@ -690,6 +602,7 @@ const App = () => {
       query.outFields = ["*"];
       const result = await layerView.queryFeatures(query);
       const featuresArcGIS = result.features;
+      debugger;
       if (!featuresArcGIS.length) {
         window.alert("La capa no tiene features para exportar.");
         return;
@@ -702,38 +615,30 @@ const App = () => {
           if (geom.spatialReference && geom.spatialReference.isWebMercator) {
             geom = webMercatorToGeographic(geom);
           }
-        } catch (e) {
-          console.warn("No se pudo transformar geom:", e);
-        }
+        } catch {}
         let geojsonGeom = null;
-        try {
-          switch (geom.type) {
-            case "point":
-              geojsonGeom = { type: "Point", coordinates: [geom.x, geom.y] };
-              break;
-            case "polyline":
-              if (geom.paths.length === 1) {
-                geojsonGeom = {
-                  type: "LineString",
-                  coordinates: geom.paths[0],
-                };
-              } else {
-                geojsonGeom = {
-                  type: "MultiLineString",
-                  coordinates: geom.paths,
-                };
-              }
-              break;
-            case "polygon":
-              geojsonGeom = { type: "Polygon", coordinates: geom.rings };
-              break;
-            default:
-              console.warn("Geom no soportada:", geom.type);
-              continue;
-          }
-        } catch (e) {
-          console.warn("Error convirtiendo geom:", e);
-          continue;
+        switch (geom.type) {
+          case "point":
+            geojsonGeom = { type: "Point", coordinates: [geom.x, geom.y] };
+            break;
+          case "polyline":
+            if (geom.paths.length === 1) {
+              geojsonGeom = {
+                type: "LineString",
+                coordinates: geom.paths[0],
+              };
+            } else {
+              geojsonGeom = {
+                type: "MultiLineString",
+                coordinates: geom.paths,
+              };
+            }
+            break;
+          case "polygon":
+            geojsonGeom = { type: "Polygon", coordinates: geom.rings };
+            break;
+          default:
+            continue;
         }
         const props = { ...feat.attributes };
         geojsonFeatures.push({
@@ -763,16 +668,15 @@ const App = () => {
     }
   };
 
-  // Handler "Guardar como GeoJSON"
   const handleGuardarComoGeoJSON = () => {
     if (layers.length === 0) {
       window.alert("No hay capas cargadas para guardar.");
       return;
     }
     const opciones = layers.map((e, idx) => `${idx}: ${e.name}`).join("\n");
-    const texto =
-      "Seleccione el índice de la capa a guardar (ejemplo: 0):\n" + opciones;
-    const respuesta = window.prompt(texto);
+    const respuesta = window.prompt(
+      "Seleccione el índice de la capa a guardar (ejemplo: 0):\n" + opciones
+    );
     if (respuesta == null) return;
     const idx = parseInt(respuesta, 10);
     if (isNaN(idx) || idx < 0 || idx >= layers.length) {
@@ -792,7 +696,7 @@ const App = () => {
         }
       `}</style>
 
-      {/* Input oculto para shapefiles ZIP de entrada */}
+      {/* Input oculto para shapefile ZIP */}
       <input
         type="file"
         accept=".zip"
@@ -905,7 +809,13 @@ const App = () => {
             zIndex: 2000,
           }}
         >
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+            }}
+          >
             <div
               style={{
                 marginBottom: "10px",
@@ -930,7 +840,7 @@ const App = () => {
         </div>
       )}
 
-      {/* Conteo de seleccionados con "Deseleccionar todo" */}
+      {/* Conteo seleccionados */}
       {selectedCount > 0 && (
         <div
           style={{
@@ -965,7 +875,7 @@ const App = () => {
         </div>
       )}
 
-      {/* Panel de capas en lado izquierdo */}
+      {/* Panel de capas */}
       <div
         style={{
           position: "absolute",
