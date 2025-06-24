@@ -42,6 +42,7 @@ const App = () => {
     viewRef.current = view;
 
     view.when(() => {
+
       // Quitar widget de zoom
       view.ui.remove("zoom");
 
@@ -225,22 +226,52 @@ const App = () => {
     };
   }, []);
 
-  // Conversión GeoJSON -> ArcGIS geometry para carga
   const convertGeometry = (geo) => {
-    if (!geo) return null;
-    const type = geo.type.toLowerCase();
-    switch (type) {
-      case "point":
-        return { type: "point", x: geo.coordinates[0], y: geo.coordinates[1] };
-      case "linestring":
-        return { type: "polyline", paths: [geo.coordinates] };
-      case "polygon":
-        return { type: "polygon", rings: geo.coordinates };
-      default:
-        console.warn("Tipo no soportado en convertGeometry:", type);
-        return null;
-    }
-  };
+  if (!geo) return null;
+  const type = geo.type.toLowerCase();
+  switch (type) {
+    case "point":
+      return {
+        type: "point",
+        x: geo.coordinates[0],
+        y: geo.coordinates[1]
+      };
+
+    case "linestring":
+      // Un solo path
+      return {
+        type: "polyline",
+        paths: [geo.coordinates]  // [[ [x,y], [x,y], ... ]]
+      };
+
+    case "multilinestring":
+      // Varios paths: cada elemento de geo.coordinates es un array de puntos
+      return {
+        type: "polyline",
+        paths: geo.coordinates    // [ [ [x1,y1],... ], [ [x2,y2],... ], ... ]
+      };
+
+    case "polygon":
+      // En GeoJSON, `coordinates` suele ser: [ ringExterior, ringInterior1?, ... ]
+      return {
+        type: "polygon",
+        rings: geo.coordinates    // [ [ [x,y],... ], [ [x,y],... ], ... ]
+      };
+
+    case "multipolygon":
+      {
+        const allRings = geo.coordinates.flat();
+        return {
+          type: "polygon",
+          rings: allRings
+        };
+      }
+
+    default:
+      console.warn("Tipo no soportado en convertGeometry:", type);
+      return null;
+  }
+};
 
   // Color distintivo
   const generateColorForIndex = (index) => {
