@@ -128,16 +128,26 @@ const AppContainer = () => {
             }
             // -------------------------------
             // 2) Editar atributos en layer.source
-            entry.layer.source.forEach((graphic) => {
-                const oid = graphic.attributes.OBJECTID;
-                if (selectedIds.includes(oid)) {
-                    const oldValue = graphic.attributes[fieldName];
-                    graphic.attributes[fieldName] = parsedValue;
-                    console.log(
-                        `Feature OBJECTID=${oid}, valor antiguo: ${oldValue}, valor nuevo: ${graphic.attributes[fieldName]}`
-                    );
+            const updates = selectedIds.map(oid => ({
+                attributes: {
+                    OBJECTID: oid,
+                    [fieldName]: parsedValue
                 }
+            }));
+
+            const editResult = await entry.layer.applyEdits({
+                updateFeatures: updates
             });
+
+            // ADD ERROR CHECKING HERE
+            if (editResult.updateFeaturesResults) {
+                editResult.updateFeaturesResults.forEach(result => {
+                    if (!result.success) {
+                        console.error("Failed to update feature:", result.error);
+                        // Optional: show specific error to user
+                    }
+                });
+            }
             // -------------------------------
             // 3) Consulta posterior con queryFeatures para verificar nuevos valores
             let resultsAfter;
@@ -478,26 +488,6 @@ const AppContainer = () => {
         setLoading(false);
     };
 
-    // Función para generar GeoJSON a partir de layer.source
-    const generateGeoJSONFromSource = (layer) => {
-        // layer.source debe ser un array de Graphic
-        const features = (layer.source || [])
-            .map((graphic) => {
-                const geom = arcgisToGeoJSON(graphic.geometry);
-                if (!geom) return null;
-                return {
-                    type: "Feature",
-                    geometry: geom,
-                    properties: { ...graphic.attributes },
-                };
-            })
-            .filter(Boolean);
-        return {
-            type: "FeatureCollection",
-            features,
-        };
-    };
-
     const generateGeoJSON = async (layer) => {
         const query = layer.createQuery();
         query.where = "1=1";
@@ -508,11 +498,17 @@ const AppContainer = () => {
 
         return {
             type: "FeatureCollection",
-            features: results.features.map((f) => ({
-                type: "Feature",
-                geometry: arcgisToGeoJSON(f.geometry),
-                properties: f.attributes,
-            })),
+            features: results.features
+                .map((f) => {
+                    const geom = arcgisToGeoJSON(f.geometry);
+                    if (!geom) return null;
+                    return {
+                        type: "Feature",
+                        geometry: geom,
+                        properties: f.attributes,
+                    };
+                })
+                .filter(Boolean), // Remove null features
         };
 
     };
@@ -540,8 +536,9 @@ const AppContainer = () => {
             alert("No hay capa para exportar.");
             return;
         }
-        const geojson = await generateGeoJSONFromSource(layer);
+        const geojson = await generateGeoJSON(layer);
         await loadShpWriteFromCDN();
+        console.log("geojson.features.geometry : " + geojson.features.geometry)
         if (!geojson.features.length) {
             alert("No hay entidades válidas para exportar.");
             return;
