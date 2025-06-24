@@ -59,7 +59,7 @@ const AppContainer = () => {
             window.alert("Campo no encontrado.");
             return;
         }
-        // Parsear newValueRaw
+        // Parsear newValueRaw según tipo
         let parsedValue = null;
         switch (fieldDef.type) {
             case "integer":
@@ -87,7 +87,7 @@ const AppContainer = () => {
                         window.alert("Fecha inválida.");
                         return;
                     }
-                    // ArcGIS JS API espera Date o timestamp numérico. Un Date es válido.
+                    // ArcGIS JS API acepta Date
                     parsedValue = d;
                 }
                 break;
@@ -107,39 +107,81 @@ const AppContainer = () => {
         }
 
         try {
-            // Actualizar atributos en los graphics del source
-            // layer.source es un array de Graphics si es un FeatureLayer client-side
+            // -------------------------------
+            // 1) Consulta previa con queryFeatures para ver valores antiguos
+            const query = layer.createQuery();
+            query.where = "1=1";
+            query.returnGeometry = false;
+            query.outFields = ["*"];
+            let resultsBefore;
+            try {
+                resultsBefore = await layer.queryFeatures(query);
+                console.log(
+                    "DEBUG antes de editar, atributos de todas las features:",
+                    resultsBefore.features.map((f) => ({
+                        OBJECTID: f.attributes.OBJECTID,
+                        valor: f.attributes[fieldName]
+                    }))
+                );
+            } catch (err) {
+                console.error("Error en queryFeatures antes de editar:", err);
+            }
+            // -------------------------------
+            // 2) Editar atributos en layer.source
             entry.layer.source.forEach((graphic) => {
-                // graphic.attributes.OBJECTID es el id único en memoria
-                if (selectedIds.includes(graphic.attributes.OBJECTID)) {
+                const oid = graphic.attributes.OBJECTID;
+                if (selectedIds.includes(oid)) {
                     const oldValue = graphic.attributes[fieldName];
                     graphic.attributes[fieldName] = parsedValue;
-                    console.log(`Feature OBJECTID=${graphic.attributes.OBJECTID}, valor antiguo: ${oldValue}, nuevo: ${parsedValue}`);
+                    console.log(
+                        `Feature OBJECTID=${oid}, valor antiguo: ${oldValue}, valor nuevo: ${graphic.attributes[fieldName]}`
+                    );
                 }
             });
-            // Refrescar la vista para que el popup y render reflejen cambios
+            // -------------------------------
+            // 3) Consulta posterior con queryFeatures para verificar nuevos valores
+            let resultsAfter;
+            try {
+                // Reusar mismo query
+                resultsAfter = await layer.queryFeatures(query);
+                console.log(
+                    "DEBUG después de editar, atributos de todas las features:",
+                    resultsAfter.features.map((f) => ({
+                        OBJECTID: f.attributes.OBJECTID,
+                        valor: f.attributes[fieldName]
+                    }))
+                );
+            } catch (err) {
+                console.error("Error en queryFeatures después de editar:", err);
+            }
+            // -------------------------------
+            // 4) Forzar redraw del mapa
             const view = viewRef.current;
             if (view && typeof view.requestRender === "function") {
                 view.requestRender();
             } else {
+                // fallback: alternar visibilidad
                 entry.layer.visible = false;
                 entry.layer.visible = true;
-                // Si no existe refresh, forzar redraw: 
-                // A veces basta con reasignar visible = false/true, pero usualmente refresh() existe en client-side
-                //console.warn("layerView.refresh() no disponible");
             }
-            // Si el popup está abierto sobre una feature editada, ciérralo para que al reclicarlo muestre el nuevo valor
+            // -------------------------------
+            // 5) Si el popup está abierto sobre una feature editada, cerrarlo y reabrir para mostrar nuevo valor
             if (view && view.popup.open) {
                 const sel = view.popup.selectedFeature;
-                if (sel && selectedIds.includes(sel.attributes.OBJECTID)) {
-                    const loc = view.popup.location;
-                    view.popup.close();
-                    view.popup.open({
-                        features: [sel],
-                        location: loc
-                    });
+                if (sel) {
+                    const oidSel = sel.attributes?.OBJECTID;
+                    if (selectedIds.includes(oidSel)) {
+                        const loc = view.popup.location;
+                        view.popup.close();
+                        // Reabrir popup en la misma feature para que muestre atributos actualizados
+                        view.popup.open({
+                            features: [sel],
+                            location: loc
+                        });
+                    }
                 }
             }
+            // -------------------------------
             window.alert(
                 `Se actualizaron ${selectedIds.length} feature(s) en "${entry.name}".`
             );
@@ -150,6 +192,7 @@ const AppContainer = () => {
             setBatchEditOpen(false);
         }
     };
+
 
     // Sincronizar layersRef.current siempre que cambie layers
     useEffect(() => {
@@ -435,11 +478,34 @@ const AppContainer = () => {
         setLoading(false);
     };
 
+    // Función para generar GeoJSON a partir de layer.source
+    const generateGeoJSONFromSource = (layer) => {
+        // layer.source debe ser un array de Graphic
+        const features = (layer.source || [])
+            .map((graphic) => {
+                const geom = arcgisToGeoJSON(graphic.geometry);
+                if (!geom) return null;
+                return {
+                    type: "Feature",
+                    geometry: geom,
+                    properties: { ...graphic.attributes },
+                };
+            })
+            .filter(Boolean);
+        return {
+            type: "FeatureCollection",
+            features,
+        };
+    };
+
     const generateGeoJSON = async (layer) => {
         const query = layer.createQuery();
+        query.where = "1=1";
         query.returnGeometry = true;
         query.outFields = ["*"];
         const results = await layer.queryFeatures(query);
+        console.log("DEBUG: primeros 5 attributes completos:", results.features.slice(0, 5).map(f => f.attributes));
+
         return {
             type: "FeatureCollection",
             features: results.features.map((f) => ({
@@ -448,6 +514,7 @@ const AppContainer = () => {
                 properties: f.attributes,
             })),
         };
+
     };
     const arcgisToGeoJSON = (geometry) => {
         if (!geometry || !geometry.type) return null;
@@ -473,7 +540,7 @@ const AppContainer = () => {
             alert("No hay capa para exportar.");
             return;
         }
-        const geojson = await generateGeoJSON(layer);
+        const geojson = await generateGeoJSONFromSource(layer);
         await loadShpWriteFromCDN();
         if (!geojson.features.length) {
             alert("No hay entidades válidas para exportar.");
