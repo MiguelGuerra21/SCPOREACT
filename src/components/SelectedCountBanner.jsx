@@ -1,7 +1,7 @@
 // src/components/SelectedCountBanner.jsx
 import React from "react";
 
-const SelectedCountBanner = ({ count, onDeselectAll, onBatchEdit }) => {
+const SelectedCountBanner = ({ count, onDeselectAll, onBatchEdit, hasPolygons }) => {
   if (count === 0) return null;
   return (
     <div
@@ -26,12 +26,14 @@ const SelectedCountBanner = ({ count, onDeselectAll, onBatchEdit }) => {
         >
           Deseleccionar todo
         </button>
-        <button
-          style={{ padding: "4px 8px", cursor: "pointer" }}
-          onClick={onBatchEdit}
-        >
-          Editar atributos
-        </button>
+        {hasPolygons && (
+          <button
+            style={{ padding: "4px 8px", cursor: "pointer" }}
+            onClick={onBatchEdit}
+          >
+            Editar atributos
+          </button>
+        )}
       </div>
     </div>
   );

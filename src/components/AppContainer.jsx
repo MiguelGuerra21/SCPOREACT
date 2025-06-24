@@ -38,6 +38,12 @@ const AppContainer = () => {
 
     // Ref para el input de archivos
     const fileInputRef = useRef(null);
+    
+    // Compute if any selected features are polygons
+    const hasPolygons = layers.some(entry => 
+        entry.selectedIds.length > 0 && 
+        entry.layer.geometryType === 'polygon'
+    );
 
     // Dentro de AppContainer:
 
@@ -538,7 +544,6 @@ const AppContainer = () => {
         }
         const geojson = await generateGeoJSON(layer);
         await loadShpWriteFromCDN();
-        console.log("geojson.features.geometry : " + geojson.features.geometry)
         if (!geojson.features.length) {
             alert("No hay entidades válidas para exportar.");
             return;
@@ -837,6 +842,7 @@ const AppContainer = () => {
             {/* SelectedCountBanner con botón para abrir BatchEditModal */}
             <SelectedCountBanner
                 count={selectedCount}
+                hasPolygons={hasPolygons}
                 onDeselectAll={() => {
                     layersRef.current.forEach((entry) => {
                         if (entry.highlightHandle) {
