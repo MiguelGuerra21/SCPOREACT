@@ -1,5 +1,6 @@
 // src/components/AppContainer.jsx
 import React, { useState, useRef, useEffect } from "react";
+import JSZip from "jszip";
 import shpjs from "shpjs";
 import { saveAs } from "file-saver";
 import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
@@ -14,6 +15,8 @@ import LayerPanel from "./LayerPanel.jsx";
 import SelectedCountBanner from "./SelectedCountBanner";
 import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
+import BatchEditModal from "./BatchEditModal";
+
 
 const AppContainer = () => {
     // ----- Estados y refs -----
@@ -23,6 +26,7 @@ const AppContainer = () => {
     const [loading, setLoading] = useState(false);  // overlay de carga mientras se procesan archivos
     const [menuOpen, setMenuOpen] = useState(false);
     const [selectedCount, setSelectedCount] = useState(0);
+    const [batchEditOpen, setBatchEditOpen] = useState(false);
 
     // Ref al MapView (instancia de ArcGIS MapView)
     const viewRef = useRef(null);
@@ -34,6 +38,118 @@ const AppContainer = () => {
 
     // Ref para el input de archivos
     const fileInputRef = useRef(null);
+
+    // Dentro de AppContainer:
+
+    const handleBatchEditApply = async (layerIndex, fieldName, newValueRaw) => {
+        const entry = layers[layerIndex];
+        if (!entry) {
+            window.alert("Error interno: capa no encontrada.");
+            return;
+        }
+        const { layer, layerView, selectedIds } = entry;
+        if (!selectedIds || !selectedIds.length) {
+            window.alert("No hay features seleccionadas en la capa.");
+            setBatchEditOpen(false);
+            return;
+        }
+        // Obtener definición del campo
+        const fieldDef = layer.fields.find((f) => f.name === fieldName);
+        if (!fieldDef) {
+            window.alert("Campo no encontrado.");
+            return;
+        }
+        // Parsear newValueRaw
+        let parsedValue = null;
+        switch (fieldDef.type) {
+            case "integer":
+            case "small-integer":
+                parsedValue = parseInt(newValueRaw, 10);
+                if (isNaN(parsedValue)) {
+                    window.alert("Valor inválido para campo entero.");
+                    return;
+                }
+                break;
+            case "double":
+                parsedValue = parseFloat(newValueRaw);
+                if (isNaN(parsedValue)) {
+                    window.alert("Valor inválido para campo numérico.");
+                    return;
+                }
+                break;
+            case "date":
+                if (!newValueRaw) {
+                    parsedValue = null;
+                } else {
+                    // newValueRaw viene de <input type="date">: "YYYY-MM-DD"
+                    const d = new Date(newValueRaw);
+                    if (isNaN(d.getTime())) {
+                        window.alert("Fecha inválida.");
+                        return;
+                    }
+                    // ArcGIS JS API espera Date o timestamp numérico. Un Date es válido.
+                    parsedValue = d;
+                }
+                break;
+            case "boolean":
+                if (newValueRaw === "true") parsedValue = true;
+                else if (newValueRaw === "false") parsedValue = false;
+                else {
+                    window.alert("Selecciona true o false para campo booleano.");
+                    return;
+                }
+                break;
+            case "string":
+                parsedValue = newValueRaw;
+                break;
+            default:
+                parsedValue = newValueRaw;
+        }
+
+        try {
+            // Actualizar atributos en los graphics del source
+            // layer.source es un array de Graphics si es un FeatureLayer client-side
+            entry.layer.source.forEach((graphic) => {
+                // graphic.attributes.OBJECTID es el id único en memoria
+                if (selectedIds.includes(graphic.attributes.OBJECTID)) {
+                    const oldValue = graphic.attributes[fieldName];
+                    graphic.attributes[fieldName] = parsedValue;
+                    console.log(`Feature OBJECTID=${graphic.attributes.OBJECTID}, valor antiguo: ${oldValue}, nuevo: ${parsedValue}`);
+                }
+            });
+            // Refrescar la vista para que el popup y render reflejen cambios
+            const view = viewRef.current;
+            if (view && typeof view.requestRender === "function") {
+                view.requestRender();
+            } else {
+                entry.layer.visible = false;
+                entry.layer.visible = true;
+                // Si no existe refresh, forzar redraw: 
+                // A veces basta con reasignar visible = false/true, pero usualmente refresh() existe en client-side
+                //console.warn("layerView.refresh() no disponible");
+            }
+            // Si el popup está abierto sobre una feature editada, ciérralo para que al reclicarlo muestre el nuevo valor
+            if (view && view.popup.open) {
+                const sel = view.popup.selectedFeature;
+                if (sel && selectedIds.includes(sel.attributes.OBJECTID)) {
+                    const loc = view.popup.location;
+                    view.popup.close();
+                    view.popup.open({
+                        features: [sel],
+                        location: loc
+                    });
+                }
+            }
+            window.alert(
+                `Se actualizaron ${selectedIds.length} feature(s) en "${entry.name}".`
+            );
+        } catch (err) {
+            console.error("Error al editar atributos en lote:", err);
+            window.alert("Error al aplicar edición en lote: " + err.message);
+        } finally {
+            setBatchEditOpen(false);
+        }
+    };
 
     // Sincronizar layersRef.current siempre que cambie layers
     useEffect(() => {
@@ -51,58 +167,58 @@ const AppContainer = () => {
     // ----- Funciones auxiliares -----
 
     // Convierte geometría GeoJSON a geometría ArcGIS (point/polyline/polygon),
-// incluyendo MultiLineString y MultiPolygon
-const convertGeometry = (geo) => {
-  if (!geo) return null;
-  const type = geo.type.toLowerCase();
-  switch (type) {
-    case "point":
-      return {
-        type: "point",
-        x: geo.coordinates[0],
-        y: geo.coordinates[1],
-      };
+    // incluyendo MultiLineString y MultiPolygon
+    const convertGeometry = (geo) => {
+        if (!geo) return null;
+        const type = geo.type.toLowerCase();
+        switch (type) {
+            case "point":
+                return {
+                    type: "point",
+                    x: geo.coordinates[0],
+                    y: geo.coordinates[1],
+                };
 
-    case "linestring":
-      // Un solo camino (path)
-      return {
-        type: "polyline",
-        paths: [geo.coordinates], // [ [ [x,y], [x,y], ... ] ]
-      };
+            case "linestring":
+                // Un solo camino (path)
+                return {
+                    type: "polyline",
+                    paths: [geo.coordinates], // [ [ [x,y], [x,y], ... ] ]
+                };
 
-    case "multilinestring":
-      // Varios caminos: cada elemento de coordinates es un array de puntos
-      return {
-        type: "polyline",
-        paths: geo.coordinates, // [ [ [x1,y1],... ], [ [x2,y2],... ], ... ]
-      };
+            case "multilinestring":
+                // Varios caminos: cada elemento de coordinates es un array de puntos
+                return {
+                    type: "polyline",
+                    paths: geo.coordinates, // [ [ [x1,y1],... ], [ [x2,y2],... ], ... ]
+                };
 
-    case "polygon":
-      // coordinates: [ ringExterior, ringInterior1?, ... ]
-      return {
-        type: "polygon",
-        rings: geo.coordinates, // [ [ [x,y],... ], [ [x,y],... ], ... ]
-      };
+            case "polygon":
+                // coordinates: [ ringExterior, ringInterior1?, ... ]
+                return {
+                    type: "polygon",
+                    rings: geo.coordinates, // [ [ [x,y],... ], [ [x,y],... ], ... ]
+                };
 
-    case "multipolygon":
-      // coordinates: [ polygon1, polygon2, ... ]
-      // donde cada polygon es [ ringExterior, ringInterior1?, ... ]
-      // ArcGIS espera en `rings` un array plano de todos los anillos:
-      //   rings: [ ring1, ring2, ..., ringN ]
-      {
-        // Aplanamos un nivel: obtenemos todos los anillos de cada polígono
-        const rings = geo.coordinates.flat();
-        return {
-          type: "polygon",
-          rings,
-        };
-      }
+            case "multipolygon":
+                // coordinates: [ polygon1, polygon2, ... ]
+                // donde cada polygon es [ ringExterior, ringInterior1?, ... ]
+                // ArcGIS espera en `rings` un array plano de todos los anillos:
+                //   rings: [ ring1, ring2, ..., ringN ]
+                {
+                    // Aplanamos un nivel: obtenemos todos los anillos de cada polígono
+                    const rings = geo.coordinates.flat();
+                    return {
+                        type: "polygon",
+                        rings,
+                    };
+                }
 
-    default:
-      console.warn("Tipo no soportado en convertGeometry:", type);
-      return null;
-  }
-};
+            default:
+                console.warn("Tipo no soportado en convertGeometry:", type);
+                return null;
+        }
+    };
 
 
     // Genera un color distintivo según índice
@@ -157,13 +273,31 @@ const convertGeometry = (geo) => {
             return;
         }
         try {
+            // 1. Leer el ArrayBuffer del ZIP
             const arrayBuffer = await file.arrayBuffer();
+
+            // 2. Usar JSZip para inspeccionar contenido
+            const zip = await JSZip.loadAsync(arrayBuffer);
+            // Revisar si existe al menos un archivo con extensión .prj (case-insensitive)
+            const fileNames = Object.keys(zip.files); // nombres de rutas dentro del zip
+            const hasPrj = fileNames.some((name) =>
+                name.toLowerCase().endsWith(".prj")
+            );
+            if (!hasPrj) {
+                window.alert(
+                    "No se puede mostrar una capa no geolocalizada junto a las localizadas"
+                );
+                return;
+            }
+
+            // 3. Si tiene .prj, continuar con shpjs
             const geojson = await shpjs(arrayBuffer);
             if (!geojson || !geojson.features?.length) {
                 console.warn("No valid features found in shapefile:", file.name);
                 return;
             }
-            // Convertir features a source de ArcGIS
+
+            // 4. Convertir features a source de ArcGIS, con filtrado de fechas sentinela
             const features = geojson.features
                 .map((f, i) => {
                     const geometry = convertGeometry(f.geometry);
@@ -175,19 +309,13 @@ const convertGeometry = (geo) => {
                     Object.entries(propsRaw).forEach(([key, value]) => {
                         if (value instanceof Date) {
                             const yr = value.getFullYear();
-                            // Detectar fecha sentinela: shapefile vacío usualmente da año 1899 o similar
+                            // Detectar fecha sentinela: shapefile vacío suele dar año 1899 o similar
                             if (yr < 1900) {
-                                // Reemplazamos por null para que ArcGIS acepte un valor nulo en campo date
                                 propsClean[key] = null;
                             } else {
                                 propsClean[key] = value;
                             }
                         } else {
-                            // Si shpjs devolviera cadena para fecha, podrías intentar parsear:
-                            // Por ejemplo, si value es string y quieres parsear a Date:
-                            // const d = new Date(value);
-                            // if (!isNaN(d.getTime()) && d.getFullYear() >= 1900) propsClean[key] = d;
-                            // else propsClean[key] = null;
                             propsClean[key] = value;
                         }
                     });
@@ -202,7 +330,8 @@ const convertGeometry = (geo) => {
                 console.warn("No valid features after conversion:", file.name);
                 return;
             }
-            // Crear dynamicFields según primera feature
+
+            // 5. Preparar campos dinámicos
             const firstProps = geojson.features[0]?.properties || {};
             const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
                 let type;
@@ -212,16 +341,22 @@ const convertGeometry = (geo) => {
                 else type = "string";
                 return { name: key, alias: key, type };
             });
+
+            // 6. Definir colores y geometryType
             const [r, g, b] = generateColorForIndex(newId);
             const fillColor = [r, g, b, 0.3];
             const outlineColor = [r, g, b, 1];
-            // Detectar geometryType para FeatureLayer
             const geomType0 = geojson.features[0]?.geometry?.type;
             let geometryType = "polygon";
             if (geomType0 === "Point") geometryType = "point";
-            else if (geomType0 === "LineString" || geomType0 === "MultiLineString")
+            else if (
+                geomType0 === "LineString" ||
+                geomType0 === "MultiLineString"
+            )
                 geometryType = "polyline";
             else geometryType = "polygon";
+
+            // 7. Crear FeatureLayer
             const featureLayer = new FeatureLayer({
                 source: features,
                 objectIdField: "OBJECTID",
@@ -259,7 +394,8 @@ const convertGeometry = (geo) => {
                     ],
                 },
             });
-            // Agregar capa al mapa
+
+            // 8. Agregar capa al mapa
             view.map.add(featureLayer);
             await featureLayer.when();
             // Centrar extensión de la capa cargada
@@ -268,7 +404,7 @@ const convertGeometry = (geo) => {
                 await view.goTo({ target: extentResult.extent, padding: 50 });
             }
             const layerView = await view.whenLayerView(featureLayer);
-            // Crear entrada y actualizar estado
+            // 9. Actualizar estado con la nueva capa
             const newEntry = {
                 id: newId,
                 name: nameWithoutExt || `Layer ${newId}`,
@@ -286,6 +422,7 @@ const convertGeometry = (geo) => {
         }
     };
 
+
     // ----- Handler para cuando se seleccionan archivos en el input -----
     const handleFileLoad = async (files) => {
         setLoading(true);
@@ -298,7 +435,6 @@ const convertGeometry = (geo) => {
         setLoading(false);
     };
 
-    // ----- Exportar capa como Shapefile -----
     const generateGeoJSON = async (layer) => {
         const query = layer.createQuery();
         query.returnGeometry = true;
@@ -306,13 +442,11 @@ const convertGeometry = (geo) => {
         const results = await layer.queryFeatures(query);
         return {
             type: "FeatureCollection",
-            features: results.features
-                .map((f) => ({
-                    type: "Feature",
-                    geometry: arcgisToGeoJSON(f.geometry),
-                    properties: f.attributes,
-                }))
-                .filter((f) => f.geometry),
+            features: results.features.map((f) => ({
+                type: "Feature",
+                geometry: arcgisToGeoJSON(f.geometry),
+                properties: f.attributes,
+            })),
         };
     };
     const arcgisToGeoJSON = (geometry) => {
@@ -636,7 +770,7 @@ const convertGeometry = (geo) => {
                 onCenterView={handleCenterView}
             />
 
-            {/* Conteo seleccionados */}
+            {/* SelectedCountBanner con botón para abrir BatchEditModal */}
             <SelectedCountBanner
                 count={selectedCount}
                 onDeselectAll={() => {
@@ -649,7 +783,21 @@ const convertGeometry = (geo) => {
                     });
                     setSelectedCount(0);
                 }}
+                onBatchEdit={() => {
+                    // Solo abrir si hay selection
+                    if (selectedCount > 0) {
+                        setBatchEditOpen(true);
+                    }
+                }}
             />
+            {/* BatchEditModal */}
+            {batchEditOpen && (
+                <BatchEditModal
+                    layers={layers}
+                    onCancel={() => setBatchEditOpen(false)}
+                    onApply={handleBatchEditApply}
+                />
+            )}
 
             {/* Modal Exportar Shapefile */}
             {exportModalOpen && (

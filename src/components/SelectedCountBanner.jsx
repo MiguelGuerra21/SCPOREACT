@@ -1,7 +1,7 @@
 // src/components/SelectedCountBanner.jsx
 import React from "react";
 
-const SelectedCountBanner = ({ count, onDeselectAll }) => {
+const SelectedCountBanner = ({ count, onDeselectAll, onBatchEdit }) => {
   if (count === 0) return null;
   return (
     <div
@@ -19,12 +19,20 @@ const SelectedCountBanner = ({ count, onDeselectAll }) => {
     >
       <div>Seleccionados: {count}</div>
       <hr style={{ margin: "4px 0" }} />
-      <button
-        style={{ padding: "4px 8px", cursor: "pointer" }}
-        onClick={onDeselectAll}
-      >
-        Deseleccionar todo
-      </button>
+      <div style={{ display: "flex", gap: "8px" }}>
+        <button
+          style={{ padding: "4px 8px", cursor: "pointer" }}
+          onClick={onDeselectAll}
+        >
+          Deseleccionar todo
+        </button>
+        <button
+          style={{ padding: "4px 8px", cursor: "pointer" }}
+          onClick={onBatchEdit}
+        >
+          Editar atributos
+        </button>
+      </div>
     </div>
   );
 };
