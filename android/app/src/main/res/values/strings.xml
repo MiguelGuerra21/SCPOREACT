@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SCPOMobileApp</string>
+    <string name="title_activity_main">SCPOMobileApp</string>
+    <string name="package_name">com.yourcompany.scpommobile</string>
+    <string name="custom_url_scheme">com.yourcompany.scpommobile</string>
+</resources>

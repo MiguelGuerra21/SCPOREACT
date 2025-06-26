@@ -18,6 +18,7 @@ import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 
 
+
 const AppContainer = () => {
     // ----- Estados y refs -----
     const [layers, setLayers] = useState([]);       // lista de entradas de capa
