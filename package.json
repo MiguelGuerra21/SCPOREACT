@@ -46,6 +46,7 @@
     ]
   },
   "devDependencies": {
+    "@capacitor/cli": "^7.4.0",
     "@craco/craco": "^7.1.0",
     "buffer": "^6.0.3",
     "path-browserify": "^1.0.1",

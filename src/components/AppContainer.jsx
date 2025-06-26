@@ -473,6 +473,7 @@ const AppContainer = () => {
                 highlightHandle: null,
                 selectedIds: [],
                 extent: extentResult?.extent || null,
+                color: [r, g, b],
             };
             setLayers((prev) => [...prev, newEntry]);
         } catch (err) {
