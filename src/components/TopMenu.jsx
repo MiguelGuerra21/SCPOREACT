@@ -18,6 +18,7 @@ const TopMenu = ({
         borderBottom: "1px solid #ccc",
         position: "relative",
         zIndex: 1000,
+        paddingTop: "30px",
       }}
     >
       <div style={{ display: "inline-block" }}>
