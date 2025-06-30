@@ -3,6 +3,11 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+import '@arcgis/core/assets/esri/themes/light/main.css';
+import esriConfig from "@arcgis/core/config";
+
+// Configura assets para uso offline
+esriConfig.assetsPath = "./assets";
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
