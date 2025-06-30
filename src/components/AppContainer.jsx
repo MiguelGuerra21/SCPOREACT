@@ -1,7 +1,10 @@
 // src/components/AppContainer.jsx
 import React, { useState, useRef, useEffect } from "react";
+import { StatusBar } from "@capacitor/status-bar";
 import JSZip from "jszip";
 import shpjs from "shpjs";
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Capacitor } from '@capacitor/core';
 import { saveAs } from "file-saver";
 import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
@@ -22,13 +25,14 @@ import BatchEditModal from "./BatchEditModal";
 const AppContainer = () => {
     // ----- Estados y refs -----
     const [layers, setLayers] = useState([]);       // lista de entradas de capa
+    const [topOffset, setTopOffset] = useState(0);
     const layersRef = useRef([]);                   // ref sincronizado a layers para acceso en closures
     const layerIdRef = useRef(0);                   // para asignar id incremental a cada capa
     const [loading, setLoading] = useState(false);  // overlay de carga mientras se procesan archivos
     const [menuOpen, setMenuOpen] = useState(false);
     const [selectedCount, setSelectedCount] = useState(0);
     const [batchEditOpen, setBatchEditOpen] = useState(false);
-
+    
     // Ref al MapView (instancia de ArcGIS MapView)
     const viewRef = useRef(null);
 
@@ -216,6 +220,22 @@ const AppContainer = () => {
         layersRef.current = layers;
     }, [layers]);
 
+    useEffect(() => {
+        const ajustarOffset = async () => {
+        try 
+        {
+            await StatusBar.setOverlaysWebView({ overlay: true });
+            const isAndroid = /Android/i.test(navigator.userAgent);
+            if (isAndroid) {
+                setTopOffset(28); // Ajusta este valor si el solapamiento persiste
+            }
+        } catch (e) 
+        {
+            console.warn("No se pudo ajustar la barra de estado:", e);
+        }
+    };
+    ajustarOffset();
+    }, []);
     // ----- Callback que envía MapView a este contenedor -----
     // Se pasará a MapViewWrapper para que, cuando se cree el view, hagamos viewRef.current = view
     const handleViewReady = (view) => {
@@ -558,13 +578,46 @@ const AppContainer = () => {
                 alert("Archivo generado vacío o inválido.");
                 return;
             }
-            saveAs(zipBlob, `${name}.zip`);
+            if (Capacitor.getPlatform() === "android") {
+                try
+                {
+                    // En dispositivo móvil con Capacitor: guardar con Filesystem
+                    const base64Data = await blobToBase64(zipBlob);
+                    const saved = await Filesystem.writeFile({
+                        path: `${name}.zip`,
+                        data: base64Data,
+                        directory: Directory.Documents,
+                        recursive: true,
+                    });
+                    alert('Archivo guardado en:', saved.uri || saved.path);
+                }
+                catch (err) 
+                {
+                    console.error("Permisos o escritura fallida:", err);
+                    alert("No se pudo guardar el archivo. Verifique permisos de almacenamiento.");
+                }
+            } 
+            else 
+            {
+                // En web, descargar directamente con saveAs
+                saveAs(zipBlob, `${name}.zip`);
+            }
         } catch (err) {
             console.error("Error al exportar shapefile:", err);
             alert("Error al generar el archivo.");
         }
     };
-
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const base64 = reader.result.split(",")[1];
+      resolve(base64);
+    };
+    reader.readAsDataURL(blob);
+  });
+}
     // ----- Exportar capa como GeoJSON -----
     const exportLayerAsGeoJSON = async (entry) => {
         const layerView = entry.layerView;
@@ -799,6 +852,7 @@ const AppContainer = () => {
 
             {/* Menú superior */}
             <TopMenu
+                style={{ top: `${topOffset}px` }}
                 menuOpen={menuOpen}
                 toggleMenu={toggleMenu}
                 onOpenFiles={handleOpenFiles}

@@ -35,7 +35,7 @@ const LayerPanel = ({ layers, onToggleVisibility, onCenterView }) => {
         onClick={() => setIsOpen((prev) => !prev)}
         title={isOpen ? "Contraer" : "Expandir"}
       >
-        {isOpen ? "⮜" : "⮞"}
+        {isOpen ? "-" : "+"}
       </button>
 
       {isOpen && (
