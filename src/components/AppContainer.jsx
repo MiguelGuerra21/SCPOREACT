@@ -1,7 +1,10 @@
 // src/components/AppContainer.jsx
 import React, { useState, useRef, useEffect } from "react";
+import { StatusBar } from "@capacitor/status-bar";
 import JSZip from "jszip";
 import shpjs from "shpjs";
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Capacitor } from '@capacitor/core';
 import { saveAs } from "file-saver";
 import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
@@ -23,13 +26,14 @@ import {StatusBar} from "@capacitor/status-bar";
 const AppContainer = () => {
     // ----- Estados y refs -----
     const [layers, setLayers] = useState([]);       // lista de entradas de capa
+    const [topOffset, setTopOffset] = useState(0);
     const layersRef = useRef([]);                   // ref sincronizado a layers para acceso en closures
     const layerIdRef = useRef(0);                   // para asignar id incremental a cada capa
     const [loading, setLoading] = useState(false);  // overlay de carga mientras se procesan archivos
     const [menuOpen, setMenuOpen] = useState(false);
     const [selectedCount, setSelectedCount] = useState(0);
     const [batchEditOpen, setBatchEditOpen] = useState(false);
-
+    
     // Ref al MapView (instancia de ArcGIS MapView)
     const viewRef = useRef(null);
 
@@ -902,6 +906,7 @@ const AppContainer = () => {
 
             {/* Menu */}
             <TopMenu
+                style={{ top: `${topOffset}px` }}
                 menuOpen={menuOpen}
                 toggleMenu={() => setMenuOpen((o) => !o)}
                 onOpenFiles={() => { fileInputRef.current.click(); setMenuOpen(false); }}

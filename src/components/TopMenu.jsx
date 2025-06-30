@@ -11,15 +11,16 @@ const TopMenu = ({
   onCloseApp,
 }) => {
   return (
-    <div
-      style={{
-        backgroundColor: "#f0f0f0",
-        padding: "5px",
-        borderBottom: "1px solid #ccc",
-        position: "relative",
-        zIndex: 1000
-      }}
-    >
+<div style={{
+  position: "fixed",           // flota arriba siempre
+  top: "env(safe-area-inset-top, 0px)",  // evita solaparse con la status bar
+  left: 0,
+  right: 0,
+  backgroundColor: "#f0f0f0",
+  padding: "10px 5px",
+  borderBottom: "1px solid #ccc",
+  zIndex: 1000
+}}>
       <div style={{ display: "inline-block" }}>
         <button
           style={{
