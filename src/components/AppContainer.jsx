@@ -7,7 +7,7 @@ import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercat
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import Map from "@arcgis/core/Map";
 import Extent from "@arcgis/core/geometry/Extent";
-
+import { Filesystem, Directory } from "@capacitor/filesystem";
 import TopMenu from "./TopMenu";
 import FileLoader from "./FileLoader";
 import MapViewWrapper from "./MapViewWrapper";
@@ -17,7 +17,7 @@ import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 import { Capacitor } from "@capacitor/core";
-
+import {StatusBar} from "@capacitor/status-bar";
 
 
 const AppContainer = () => {
@@ -40,19 +40,18 @@ const AppContainer = () => {
 
     // Ref para el input de archivos
     const fileInputRef = useRef(null);
-    
+
+    const isAndroid = Capacitor.getPlatform() === "android"; // Detectar si es Android
+
+    const androidStoragePermissionGranted = false;
+
     // Compute if any selected features are polygons
-    const hasPolygons = layers.some(entry => 
-        entry.selectedIds.length > 0 && 
+    const hasPolygons = layers.some(entry =>
+        entry.selectedIds.length > 0 &&
         entry.layer.geometryType === 'polygon'
     );
 
-    //Detectamos la plataforma en la que se está ejecutando la app
-    const platform = Capacitor.getPlatform();
-    console.log("DEBUG: Capacitor platform:", platform);
-
     // Dentro de AppContainer:
-
     const handleBatchEditApply = async (layerIndex, fieldName, newValueRaw) => {
         const entry = layers[layerIndex];
         if (!entry) {
@@ -220,6 +219,21 @@ const AppContainer = () => {
     useEffect(() => {
         layersRef.current = layers;
     }, [layers]);
+
+    useEffect(() => {
+        const ajustarOffset = async () => {
+            try {
+                await StatusBar.setOverlaysWebView({ overlay: true });
+                const isAndroid = /Android/i.test(navigator.userAgent);
+                if (isAndroid) {
+                    setTopOffset(28); // Ajusta este valor si el solapamiento persiste
+                }
+            } catch (e) {
+                console.warn("No se pudo ajustar la barra de estado:", e);
+            }
+        };
+        ajustarOffset();
+    }, []);
 
     // ----- Callback que envía MapView a este contenedor -----
     // Se pasará a MapViewWrapper para que, cuando se cree el view, hagamos viewRef.current = view
@@ -549,26 +563,105 @@ const AppContainer = () => {
             alert("No hay capa para exportar.");
             return;
         }
-        const geojson = await generateGeoJSON(layer);
-        await loadShpWriteFromCDN();
+        const query = layer.createQuery();
+        query.where = "1=1";
+        query.returnGeometry = true;
+        query.outFields = ["*"];
+        const result = await layer.queryFeatures(query);
+        const geojson = {
+            type: "FeatureCollection",
+            features: result.features
+                .map((f) => {
+                    let geom = f.geometry;
+                    if (geom.spatialReference?.isWebMercator) {
+                        geom = webMercatorToGeographic(geom);
+                    }
+                    let coords;
+                    switch (geom.type) {
+                        case "point":
+                            coords = [geom.x, geom.y];
+                            break;
+                        case "polyline":
+                            coords =
+                                geom.paths.length === 1 ? geom.paths[0] : geom.paths;
+                            break;
+                        case "polygon":
+                            coords = geom.rings;
+                            break;
+                        default:
+                            return null;
+                    }
+                    return {
+                        type: "Feature",
+                        geometry: Array.isArray(coords[0][0])
+                            ? { type: "Polygon", coordinates: coords }
+                            : { type: "LineString", coordinates: coords },
+                        properties: f.attributes,
+                    };
+                })
+                .filter(Boolean),
+        };
+
         if (!geojson.features.length) {
             alert("No hay entidades válidas para exportar.");
             return;
         }
-        try {
-            const zipBlob = await window.shpwrite.zip(geojson, {
-                outputType: "blob",
-            });
-            if (!zipBlob || zipBlob.size < 100) {
-                alert("Archivo generado vacío o inválido.");
+
+        await loadShpWriteFromCDN();
+        const zipBlob = await window.shpwrite.zip(geojson, { outputType: "blob" });
+        if (!zipBlob || zipBlob.size < 100) {
+            alert("Archivo generado inválido.");
+            return;
+        }
+
+        const fileName = `${name}.zip`;
+
+        if (isAndroid) {
+            try {
+                const perm = await Filesystem.requestPermissions();
+                if (perm.publicStorage === 'granted' || perm === 'granted') {
+                    // continuar
+                } else {
+                    alert("Permiso de almacenamiento no concedido.");
+                    return;
+                }
+            } catch (err) {
+                console.error("Error solicitando permisos:", err);
+                alert("No se pudieron solicitar permisos de almacenamiento.");
                 return;
             }
-            saveAs(zipBlob, `${name}.zip`);
-        } catch (err) {
-            console.error("Error al exportar shapefile:", err);
-            alert("Error al generar el archivo.");
+
+            try {
+                const buf = await zipBlob.arrayBuffer();
+                // const b64 = btoa(
+                //     new Uint8Array(buf).reduce((data, byte) => data + String.fromCharCode(byte), "")
+                // );
+                const b64 = await blobToBase64(zipBlob);
+                const path = fileName;
+                await Filesystem.writeFile({
+                    path,
+                    data: b64,
+                    directory: Directory.Documents,
+                    recursive: true,
+                });
+                alert(`Shapefile guardado en ${path}`);
+            } catch (err) {
+                console.error("Error almacenando en disco:", err);
+                alert("Error al guardar en dispositivo: " + err.message);
+            }
+        } else {
+            saveAs(zipBlob, fileName);
         }
     };
+
+    function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    }
 
     // ----- Exportar capa como GeoJSON -----
     const exportLayerAsGeoJSON = async (entry) => {
@@ -771,7 +864,7 @@ const AppContainer = () => {
         setExportModalOpen(false);
     };
 
-    // ----- Exportar como GeoJSON: prompt (o podrías crear otro modal) -----
+    // ----- Exportar como GeoJSON: prompt -----
     const handleExportGeoJSON = () => {
         if (layers.length === 0) {
             window.alert("No hay capas cargadas para guardar.");
@@ -791,83 +884,58 @@ const AppContainer = () => {
         exportLayerAsGeoJSON(layers[idx]);
     };
 
+
     // ----- JSX de render -----
     return (
         <div>
-            {/* Input oculto para shapefile ZIP */}
+            {/* FileLoader oculto */}
             <FileLoader
                 ref={fileInputRef}
                 accept=".zip"
                 multiple
-                onFilesSelected={handleFileLoad}
+                onFilesSelected={async (files) => {
+                    setLoading(true);
+                    for (let f of files) await handleFileOpen(f);
+                    setLoading(false);
+                }}
             />
 
-            {/* Menú superior */}
+            {/* Menu */}
             <TopMenu
                 menuOpen={menuOpen}
-                toggleMenu={toggleMenu}
-                onOpenFiles={handleOpenFiles}
-                onExportSHP={() => {
-                    handleExportRequest();
-                    setMenuOpen(false);
-                }}
-                onExportGeoJSON={() => {
-                    handleExportGeoJSON();
-                    setMenuOpen(false);
-                }}
-                onClearMap={() => {
-                    handleClearMap();
-                    setMenuOpen(false);
-                }}
-                onCloseApp={() => {
-                    handleCloseApp();
-                }}
+                toggleMenu={() => setMenuOpen((o) => !o)}
+                onOpenFiles={() => { fileInputRef.current.click(); setMenuOpen(false); }}
+                onExportSHP={() => { setExportModalOpen(true); setMenuOpen(false); }}
+                onExportGeoJSON={() => { exportLayerAsGeoJSON(layers[0]); setMenuOpen(false); }}
+                onClearMap={handleClearMap}
+                onCloseApp={handleCloseApp}
             />
 
-            {/* Overlay de carga */}
             {loading && <LoadingOverlay />}
 
-            {/* MapView */}
             <MapViewWrapper
                 layersRef={layersRef}
                 setSelectedCount={setSelectedCount}
-                onViewReady={handleViewReady}
-                initialViewRefs={{
-                    centerRef: initialCenterRef,
-                    zoomRef: initialZoomRef,
-                    extentRef: initialExtentRef,
-                }}
+                onViewReady={(v) => (viewRef.current = v)}
+                initialViewRefs={{ centerRef: initialCenterRef, zoomRef: initialZoomRef, extentRef: initialExtentRef }}
             />
 
-            {/* Panel de capas */}
             <LayerPanel
                 layers={layers}
                 onToggleVisibility={toggleLayerVisibility}
-                onCenterView={handleCenterView}
+                onCenterView={() => { }}
             />
 
-            {/* SelectedCountBanner con botón para abrir BatchEditModal */}
             <SelectedCountBanner
                 count={selectedCount}
-                hasPolygons={hasPolygons}
+                hasPolygons={layers.some((e) => e.selectedIds.length && e.layer.geometryType === "polygon")}
                 onDeselectAll={() => {
-                    layersRef.current.forEach((entry) => {
-                        if (entry.highlightHandle) {
-                            entry.highlightHandle.remove();
-                            entry.highlightHandle = null;
-                        }
-                        entry.selectedIds = [];
-                    });
+                    layersRef.current.forEach((e) => { e.highlightHandle?.remove(); e.selectedIds = []; });
                     setSelectedCount(0);
                 }}
-                onBatchEdit={() => {
-                    // Solo abrir si hay selection
-                    if (selectedCount > 0) {
-                        setBatchEditOpen(true);
-                    }
-                }}
+                onBatchEdit={() => selectedCount > 0 && setBatchEditOpen(true)}
             />
-            {/* BatchEditModal */}
+
             {batchEditOpen && (
                 <BatchEditModal
                     layers={layers}
@@ -876,12 +944,14 @@ const AppContainer = () => {
                 />
             )}
 
-            {/* Modal Exportar Shapefile */}
             {exportModalOpen && (
                 <ExportModal
                     layers={layers}
-                    onCancel={handleExportCancel}
-                    onConfirm={handleExportConfirm}
+                    onCancel={() => setExportModalOpen(false)}
+                    onConfirm={(idx) => {
+                        exportLayerAsShapefile(layers[idx]);
+                        setExportModalOpen(false);
+                    }}
                 />
             )}
         </div>

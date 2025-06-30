@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.yourcompany.scpommobile',
+  appId: 'com.Isastur.SCPOMobileApp',
   appName: 'SCPOMobileApp',
   webDir: 'build'
 };

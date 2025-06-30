@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "com.yourcompany.scpommobile"
+    namespace "com.Isastur.SCPOMobileApp"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.yourcompany.scpommobile"
+        applicationId "com.Isastur.SCPOMobileApp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
