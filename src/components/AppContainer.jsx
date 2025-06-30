@@ -16,6 +16,7 @@ import SelectedCountBanner from "./SelectedCountBanner";
 import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
+import { Capacitor } from "@capacitor/core";
 
 
 
@@ -45,6 +46,10 @@ const AppContainer = () => {
         entry.selectedIds.length > 0 && 
         entry.layer.geometryType === 'polygon'
     );
+
+    //Detectamos la plataforma en la que se está ejecutando la app
+    const platform = Capacitor.getPlatform();
+    console.log("DEBUG: Capacitor platform:", platform);
 
     // Dentro de AppContainer:
 
