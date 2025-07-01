@@ -1,318 +1,225 @@
 // src/components/BatchEditModal.jsx
 import React, { useState, useEffect } from "react";
+import { Capacitor } from "@capacitor/core";
 
-/**
- * BatchEditModal:
- *   - layers: array de entradas de capa, cada entrada tiene:
- *       { id, name, layer (FeatureLayer), layerView, selectedIds: [...OBJECTID], ... }
- *   - onCancel: callback para cerrar el modal sin aplicar cambios
- *   - onApply: callback cuando el usuario confirma la edición en lote. 
- *       Se le pasa (layerIndex, fieldName, newValueRaw).
- */
 const BatchEditModal = ({ layers, onCancel, onApply }) => {
-  // Filtramos las capas que tienen features seleccionadas
-  const layersWithSelection = layers
+  const isAndroid = Capacitor.getPlatform() === "android";
+
+  // 1) Gather only layers with selected features
+  const layersWithSel = layers
     .map((entry, idx) => ({ entry, idx }))
-    .filter(({ entry }) => Array.isArray(entry.selectedIds) && entry.selectedIds.length > 0);
+    .filter(({ entry }) => entry.selectedIds?.length > 0);
 
-  // Estado local:
+  // 2) State
   const [selectedLayerIdx, setSelectedLayerIdx] = useState(
-    layersWithSelection.length > 0 ? layersWithSelection[0].idx : null
+    layersWithSel[0]?.idx ?? null
   );
-  const [fieldList, setFieldList] = useState([]); // lista de campos del layer seleccionado
-  const [selectedField, setSelectedField] = useState("");
-  const [inputValue, setInputValue] = useState("");
+  const [fields, setFields] = useState([]);
+  const [fieldName, setFieldName] = useState("");
+  const [value, setValue] = useState("");
 
-  // Cuando cambie selectedLayerIdx, actualizamos el listado de campos
+  // 3) Populate fields when layer changes
   useEffect(() => {
-    if (selectedLayerIdx == null) {
-      setFieldList([]);
-      setSelectedField("");
-      return;
-    }
+    if (selectedLayerIdx == null) return;
     const entry = layers[selectedLayerIdx];
-    if (!entry || !entry.layer) {
-      setFieldList([]);
-      setSelectedField("");
-      return;
-    }
-    // Obtener fields de FeatureLayer
-    // entry.layer.fields es un array de objetos FieldDefinition
-    // Filtramos campos no editables: omitimos OBJECTID y campos sin editable?
-    const allFields = entry.layer.fields || [];
-    // Suponemos que OBJECTID es entry.layer.objectIdField; lo omitimos
     const objectIdField = entry.layer.objectIdField;
-    const editableFields = allFields.filter((f) => f.name !== objectIdField);
-    setFieldList(editableFields);
-    if (editableFields.length > 0) {
-      setSelectedField(editableFields[0].name);
-    } else {
-      setSelectedField("");
-    }
-    setInputValue("");
+    // TODO: later restrict which fields are editable here
+    const editable = entry.layer.fields.filter(
+      (f) => f.name !== objectIdField
+    );
+    setFields(editable);
+    setFieldName(editable[0]?.name || "");
+    setValue("");
   }, [selectedLayerIdx, layers]);
 
-  // Si no hay capas con selección, no mostramos modal
-  if (layersWithSelection.length === 0) {
-    return (
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          backgroundColor: "rgba(0,0,0,0.5)",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          zIndex: 3000,
-        }}
-      >
-        <div
-          style={{
-            backgroundColor: "white",
-            borderRadius: "8px",
-            padding: "20px",
-            width: "300px",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-            textAlign: "center",
-          }}
-        >
-          <p>No hay features seleccionadas en ninguna capa.</p>
-          <button
-            style={{
-              padding: "6px 12px",
-              backgroundColor: "#3498db",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-            }}
-            onClick={onCancel}
-          >
-            Cerrar
-          </button>
-        </div>
-      </div>
-    );
-  }
+  // 4) If nothing selected, render nothing
+  if (layersWithSel.length === 0) return null;
 
-  // Conteo total seleccionado en la capa actual
   const currentEntry = layers[selectedLayerIdx];
-  const selectedCount = Array.isArray(currentEntry.selectedIds)
-    ? currentEntry.selectedIds.length
-    : 0;
+  const selectedCount = currentEntry.selectedIds.length;
 
-  // Handler de Apply: llama onApply con layerIndex, fieldName y valor raw
+  // Styles
+  const backdrop = {
+    position: "fixed",
+    inset: 0,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 3000,
+  };
+  const modal = {
+    width: 400,
+    borderRadius: 8,
+    overflow: "hidden",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
+    backgroundColor: "#fff",
+  };
+  const header = {
+    padding: "12px 16px",
+    background: "linear-gradient(90deg, #4facfe, #00f2fe)",
+    color: "#fff",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  };
+  const title = { margin: 0, fontSize: 18 };
+  const closeBtn = {
+    background: "none",
+    border: "none",
+    color: "#fff",
+    fontSize: 20,
+    cursor: "pointer",
+  };
+  const body = { padding: 16, display: "flex", flexDirection: "column", gap: 12 };
+  const label = { fontSize: 14, marginBottom: 4 , textAlign: "left" };
+  const selectStyle = {
+    width: "100%",
+    padding: 8,
+    borderRadius: 4,
+    border: "1px solid #ccc",
+    fontSize: 14,
+  };
+  const inputStyle = { ...selectStyle , width: "calc(100% - 16px)", padding: "8px 8px" };
+  const footer = { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 };
+  const button = {
+    padding: "8px 16px",
+    borderRadius: 4,
+    border: "none",
+    cursor: "pointer",
+    fontSize: 14,
+  };
+  const cancelBtn = { ...button, backgroundColor: "#ccc", color: "#333" };
+  const applyBtn = { ...button, backgroundColor: "#28a745", color: "#fff" };
+
   const handleApply = () => {
-    if (!selectedField) {
-      window.alert("Selecciona un campo para editar.");
+    if (!fieldName) {
+      alert("Selecciona un campo.");
       return;
     }
-    if (inputValue == null || inputValue === "") {
-      // Podríamos permitir valor null? Aquí requerimos no vacío
-      const confirmado = window.confirm(
-        "El valor está vacío; se establecerá como null. ¿Continuar?"
-      );
-      if (!confirmado) return;
-    }
-    onApply(selectedLayerIdx, selectedField, inputValue);
+    onApply(selectedLayerIdx, fieldName, value);
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        backgroundColor: "rgba(0,0,0,0.5)",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        zIndex: 3000,
-      }}
-    >
-      <div
-        style={{
-          backgroundColor: "white",
-          borderRadius: "8px",
-          padding: "20px",
-          width: "320px",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
-        }}
-      >
-        <h2 style={{ margin: "0 0 10px" }}>Edición en lote</h2>
+    <div style={backdrop}>
+      <div style={modal}>
+        <div style={header}>
+          <h2 style={title}>Edición en lote</h2>
+          <button style={closeBtn} onClick={onCancel} aria-label="Cerrar">
+            ✕
+          </button>
+        </div>
+        <div style={body}>
+          {layersWithSel.length > 1 && (
+            <div>
+              <div style={label}>Capa ({selectedCount}):</div>
+              <select
+                style={selectStyle}
+                value={selectedLayerIdx}
+                onChange={(e) => setSelectedLayerIdx(Number(e.target.value))}
+              >
+                {layersWithSel.map(({ entry, idx }) => (
+                  <option key={idx} value={idx}>
+                    {entry.name} ({entry.selectedIds.length})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
-        {/* Selector de capa si hay más de una con selección */}
-        {layersWithSelection.length > 1 && (
-          <div style={{ marginBottom: "12px" }}>
-            <label style={{ display: "block", marginBottom: "4px" }}>
-              Capa:
-            </label>
+          <div>
+            <div style={label}>Campo a editar:</div>
             <select
-              style={{ width: "100%", padding: "6px", boxSizing: "border-box" }}
-              value={selectedLayerIdx}
-              onChange={(e) => setSelectedLayerIdx(Number(e.target.value))}
+              style={selectStyle}
+              value={fieldName}
+              onChange={(e) => setFieldName(e.target.value)}
             >
-              {layersWithSelection.map(({ entry, idx }) => (
-                <option key={idx} value={idx}>
-                  {entry.name} ({entry.selectedIds.length})
+              {fields.map((f) => (
+                <option key={f.name} value={f.name}>
+                  {f.alias || f.name} ({f.type})
                 </option>
               ))}
             </select>
           </div>
-        )}
 
-        {/* Mostrar conteo de seleccionados para la capa actual */}
-        <p style={{ margin: "0 0 12px" }}>
-          {`Features seleccionadas: ${selectedCount}`}
-        </p>
+          <div>
+            <div style={label}>Nuevo valor:</div>
+            {(() => {
+              const def = fields.find((f) => f.name === fieldName);
+              if (!def) return null;
+              switch (def.type) {
+                case "integer":
+                case "small-integer":
+                  return (
+                    <input
+                      type="number"
+                      step="1"
+                      style={inputStyle}
+                      value={value}
+                      onChange={(e) => setValue(e.target.value)}
+                    />
+                  );
+                case "double":
+                  return (
+                    <input
+                      type="number"
+                      step="any"
+                      style={inputStyle}
+                      value={value}
+                      onChange={(e) => setValue(e.target.value)}
+                    />
+                  );
+                case "date":
+                  return (
+                    <input
+                      type="date"
+                      style={inputStyle}
+                      value={value}
+                      onChange={(e) => setValue(e.target.value)}
+                    />
+                  );
+                case "boolean":
+                  return (
+                    <select
+                      style={selectStyle}
+                      value={value}
+                      onChange={(e) => setValue(e.target.value)}
+                    >
+                      <option value="">(nulo)</option>
+                      <option value="true">true</option>
+                      <option value="false">false</option>
+                    </select>
+                  );
+                default:
+                  return (
+                    <input
+                      type="text"
+                      style={inputStyle}
+                      value={value}
+                      onChange={(e) => setValue(e.target.value)}
+                    />
+                  );
+              }
+            })()}
+          </div>
 
-        {/* Selector de campo */}
-        <div style={{ marginBottom: "12px" }}>
-          <label style={{ display: "block", marginBottom: "4px" }}>
-            Campo a editar:
-          </label>
-          <select
-            style={{ width: "100%", padding: "6px", boxSizing: "border-box" }}
-            value={selectedField}
-            onChange={(e) => setSelectedField(e.target.value)}
-          >
-            {fieldList.map((f) => (
-              <option key={f.name} value={f.name}>
-                {f.alias || f.name} ({f.type})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Input dinámico según tipo de campo */}
-        {selectedField && (() => {
-          // Obtener definición del campo
-          const fieldDef = currentEntry.layer.fields.find(
-            (f) => f.name === selectedField
-          );
-          if (!fieldDef) return null;
-          // Dependiendo de fieldDef.type, elegimos input
-          switch (fieldDef.type) {
-            case "integer":
-            case "small-integer":
-              return (
-                <div style={{ marginBottom: "12px" }}>
-                  <label style={{ display: "block", marginBottom: "4px" }}>
-                    Nuevo valor (entero):
-                  </label>
-                  <input
-                    type="number"
-                    step="1"
-                    style={{ width: "100%", padding: "6px", boxSizing: "border-box" }}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                  />
-                </div>
-              );
-            case "double":
-              return (
-                <div style={{ marginBottom: "12px" }}>
-                  <label style={{ display: "block", marginBottom: "4px" }}>
-                    Nuevo valor (decimal):
-                  </label>
-                  <input
-                    type="number"
-                    step="any"
-                    style={{ width: "100%", padding: "6px", boxSizing: "border-box" }}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                  />
-                </div>
-              );
-            case "date":
-              return (
-                <div style={{ marginBottom: "12px" }}>
-                  <label style={{ display: "block", marginBottom: "4px" }}>
-                    Nuevo valor (fecha):
-                  </label>
-                  <input
-                    type="date"
-                    style={{ width: "100%", padding: "6px", boxSizing: "border-box" }}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                  />
-                </div>
-              );
-            case "string":
-              return (
-                <div style={{ marginBottom: "12px" }}>
-                  <label style={{ display: "block", marginBottom: "4px" }}>
-                    Nuevo valor (texto):
-                  </label>
-                  <input
-                    type="text"
-                    style={{ width: "100%", padding: "6px", boxSizing: "border-box" }}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                  />
-                </div>
-              );
-            case "boolean":
-              return (
-                <div style={{ marginBottom: "12px" }}>
-                  <label style={{ display: "block", marginBottom: "4px" }}>
-                    Nuevo valor (booleano):
-                  </label>
-                  <select
-                    style={{ width: "100%", padding: "6px", boxSizing: "border-box" }}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                  >
-                    <option value="">-- seleccionar --</option>
-                    <option value="true">true</option>
-                    <option value="false">false</option>
-                  </select>
-                </div>
-              );
-            default:
-              // Otros tipos: tratamos como texto
-              return (
-                <div style={{ marginBottom: "12px" }}>
-                  <label style={{ display: "block", marginBottom: "4px" }}>
-                    Nuevo valor:
-                  </label>
-                  <input
-                    type="text"
-                    style={{ width: "100%", padding: "6px", boxSizing: "border-box" }}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                  />
-                </div>
-              );
-          }
-        })()}
-
-        {/* Botones */}
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-          <button
-            style={{
-              padding: "6px 12px",
-              backgroundColor: "#ccc",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-            }}
-            onClick={onCancel}
-          >
-            Cancelar
-          </button>
-          <button
-            style={{
-              padding: "6px 12px",
-              backgroundColor: "#3498db",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer",
-            }}
-            onClick={handleApply}
-          >
-            Aplicar
-          </button>
+          <div style={footer}>
+            <button style={cancelBtn} onClick={onCancel}>
+              Cancelar
+            </button>
+            <button
+              style={applyBtn}
+              onClick={handleApply}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.backgroundColor = "#218838")
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.backgroundColor = "#28a745")
+              }
+            >
+              Aplicar
+            </button>
+          </div>
         </div>
       </div>
     </div>

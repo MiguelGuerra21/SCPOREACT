@@ -237,7 +237,7 @@ const MapViewWrapper = ({
       {/* Contenedor del mapa */}
       <div
         ref={mapDiv}
-        style={{ width: "100%", height: "calc(100vh - 37px)" }}
+        style={{ width: "100%", height: "calc(100vh)" }}
       />
     </>
   );

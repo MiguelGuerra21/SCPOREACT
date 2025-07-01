@@ -1,10 +1,9 @@
 Whenever you change your React code, you:
 
 Build the web app:
-
 npm run build
-This repopulates build/ with your latest React app.
 
+This repopulates build/ with your latest React app.
 Sync into Android:
 
 npx cap sync Android
@@ -14,7 +13,6 @@ This copies build/ → android/app/src/main/assets/public/ (the WebView’s www 
 5. Run on Android
 Finally, open or launch from the React project root:
 
-
 # Open Android Studio
 
 npx cap open android
@@ -23,11 +21,13 @@ npx cap run Android
 
 Capacitor will compile the native Android project and install the APK on your connected device/emulator. You should now see your real React/ArcGIS UI instead of the Capacitor splash page.
 
+----------------------------------------------------------------------------------------------------------------
 IF ADB FAILS ON BUILD EXECUTE THIS
 
 "C:\Users\mrg8\AppData\Local\Android\Sdk\platform-tools\adb.exe" kill-server
 "C:\Users\mrg8\AppData\Local\Android\Sdk\platform-tools\adb.exe" start-server
 
+----------------------------------------------------------------------------------------------------------------
  3. Build APK Using Gradle
 Navigate into the Android folder:
 

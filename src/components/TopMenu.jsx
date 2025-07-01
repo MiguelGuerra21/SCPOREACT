@@ -1,5 +1,6 @@
 // src/components/TopMenu.jsx
 import React from "react";
+import { Capacitor } from "@capacitor/core";
 
 const TopMenu = ({
   menuOpen,
@@ -10,79 +11,125 @@ const TopMenu = ({
   onClearMap,
   onCloseApp,
 }) => {
+  const isAndroid = Capacitor.getPlatform() === "android";
+
+  const containerStyle = {
+    position: "absolute",
+    top: isAndroid ? 40 : 0,
+    left: 0,
+    right: 0,
+    height: 56,
+    backgroundColor: "#fff",
+    display: "flex",
+    alignItems: "center",
+    padding: "0 16px",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+    zIndex: 1000,
+  };
+
+  const buttonStyle = {
+    background: "none",
+    border: "none",
+    padding: "8px 12px",
+    marginRight: 8,
+    borderRadius: 4,
+    cursor: "pointer",
+    fontSize: 16,
+    display: "flex",
+    alignItems: "center",
+    transition: "background 0.2s",
+  };
+
+  const iconStyle = {
+    width: 24,
+    height: 24,
+    marginRight: 8,
+  };
+
+  const menuStyle = {
+    position: "absolute",
+    top: 56,
+    left: 16,
+    backgroundColor: "#fff",
+    borderRadius: 8,
+    boxShadow: "0 4px 8px rgba(0,0,0,0.2)",
+    minWidth: 200,
+    overflow: "hidden",
+    zIndex: 1001,
+  };
+
+  const menuItemStyle = {
+    padding: "12px 16px",
+    cursor: "pointer",
+    transition: "background 0.2s",
+  };
+
   return (
-    <div
-      style={{
-        backgroundColor: "#f0f0f0",
-        padding: "5px",
-        borderBottom: "1px solid #ccc",
-        position: "relative",
-        zIndex: 1000
-      }}
-    >
-      <div style={{ display: "inline-block" }}>
-        <button
-          style={{
-            padding: "5px 10px",
-            backgroundColor: "transparent",
-            border: "none",
-            cursor: "pointer",
-          }}
-          onClick={toggleMenu}
+    <div style={containerStyle}>
+      <button
+        style={{
+          ...buttonStyle,
+          ...(menuOpen
+            ? { backgroundColor: "#e0e0e0" }
+            : { backgroundColor: "transparent" }),
+        }}
+        onClick={toggleMenu}
+      >
+        {/* Gradient Hamburger Icon */}
+        <svg
+          style={iconStyle}
+          viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg"
         >
-          Archivo
-        </button>
-        {menuOpen && (
+          <defs>
+            <linearGradient id="grad" x1="0%" y1="50%" x2="100%" y2="50%">
+              <stop offset="0%" stopColor="#4facfe" />
+              <stop offset="100%" stopColor="#00f2fe" />
+            </linearGradient>
+          </defs>
+          <rect x="3" y="5" width="18" height="2.5" rx="1.25" fill="url(#grad)" />
+          <rect x="3" y="11" width="18" height="2.5" rx="1.25" fill="url(#grad)" />
+          <rect x="3" y="17" width="18" height="2.5" rx="1.25" fill="url(#grad)" />
+        </svg>
+        Archivo
+      </button>
+
+      {menuOpen && (
+        <div style={menuStyle}>
+          {[
+            { label: "Abrir nuevo…", action: onOpenFiles },
+            { label: "Exportar Shapefile…", action: onExportSHP },
+            { label: "Limpiar mapa", action: onClearMap },
+          ].map(({ label, action }) => (
+            <div
+              key={label}
+              style={menuItemStyle}
+              onClick={action}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.backgroundColor = "#f5f5f5")
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.backgroundColor = "transparent")
+              }
+            >
+              {label}
+            </div>
+          ))}
+          <div style={{ height: 1, backgroundColor: "#eee", margin: "4px 0" }} />
           <div
-            style={{
-              position: "absolute",
-              backgroundColor: "white",
-              border: "1px solid #ccc",
-              boxShadow: "2px 2px 5px rgba(0,0,0,0.2)",
-              zIndex: 1001,
-              minWidth: "180px",
-            }}
+            style={menuItemStyle}
+            onClick={onCloseApp}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.backgroundColor = "#f5f5f5")
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.backgroundColor = "transparent")
+            }
           >
-            <div
-              style={{ padding: "5px 10px", cursor: "pointer" }}
-              onClick={onOpenFiles}
-            >
-              Abrir nuevo
-            </div>
-            <div
-              style={{ padding: "5px 10px", cursor: "pointer" }}
-              onClick={onExportSHP}
-            >
-              Exportar como Shapefile...
-            </div>
-            <div
-              style={{ padding: "5px 10px", cursor: "pointer" }}
-              onClick={onExportGeoJSON}
-            >
-              Exportar como GeoJSON...
-            </div>
-            <div
-              style={{ padding: "5px 10px", cursor: "pointer" }}
-              onClick={onClearMap}
-            >
-              Limpiar mapa
-            </div>
-            <div
-              style={{
-                height: "1px",
-                backgroundColor: "#ccc",
-                margin: "5px 0",
-              }}
-            ></div>
-            <div
-              style={{ padding: "5px 10px", cursor: "pointer" }}
-              onClick={onCloseApp}
-            >
-              Cerrar
-            </div>
+            Cerrar aplicación
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
