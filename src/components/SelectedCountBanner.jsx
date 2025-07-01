@@ -10,7 +10,7 @@ const SelectedCountBanner = ({
 }) => {
   const [isOpen, setIsOpen] = useState(true);
   const isAndroid = Capacitor.getPlatform() === "android";
-
+  console.log("Banner isOpen:", isOpen);
   if (count === 0) return null;
 
   const containerStyle = {
@@ -41,7 +41,6 @@ const SelectedCountBanner = ({
     color: "#fff",
     fontSize: 18,
     cursor: "pointer",
-    transform: isOpen ? "rotate(0deg)" : "rotate(180deg)",
     transition: "transform 0.3s",
   };
 
@@ -59,7 +58,6 @@ const SelectedCountBanner = ({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    // subtle vertical gradient from a deeper green to a lighter one
     background: "linear-gradient(180deg, #28a745 0%, #1fa85a 100%)",
     border: "none",
     borderRadius: 8,
@@ -90,7 +88,7 @@ const SelectedCountBanner = ({
           onClick={() => setIsOpen((o) => !o)}
           aria-label={isOpen ? "Contraer" : "Expandir"}
         >
-          ⮜
+          {isOpen ? "⮞" : "⮜"}
         </button>
       </div>
 
@@ -104,7 +102,7 @@ const SelectedCountBanner = ({
             onMouseEnter={e => e.currentTarget.style.background = "linear-gradient(180deg, #238636 0%, #1b7b4a 100%)"}
             onMouseLeave={e => e.currentTarget.style.background = "linear-gradient(180deg, #28a745 0%, #1fa85a 100%)"}
           >
-<span style={{ fontSize: 24, color: "#fff" }}>🖉</span>
+            <span style={{ fontSize: 24, color: "#fff" }}>🖉</span>
           </button>
         )}
         {/* Deseleccionar todo */}
@@ -115,8 +113,8 @@ const SelectedCountBanner = ({
           onMouseEnter={(e) => (e.currentTarget.style.background = "#e56b08")}
           onMouseLeave={(e) => (e.currentTarget.style.background = "#fd7e14")}
         >
-<span style={{ fontSize: 24, color: "#fff" }}>✘</span>
-          </button>
+          <span style={{ fontSize: 24, color: "#fff" }}>✘</span>
+        </button>
       </div>
     </div>
   );

@@ -1,6 +1,5 @@
 // src/components/AppContainer.jsx
 import React, { useState, useRef, useEffect } from "react";
-import { StatusBar } from "@capacitor/status-bar";
 import JSZip from "jszip";
 import shpjs from "shpjs";
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -10,7 +9,6 @@ import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercat
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import Map from "@arcgis/core/Map";
 import Extent from "@arcgis/core/geometry/Extent";
-import { Filesystem, Directory } from "@capacitor/filesystem";
 import TopMenu from "./TopMenu";
 import FileLoader from "./FileLoader";
 import MapViewWrapper from "./MapViewWrapper";
@@ -19,7 +17,6 @@ import SelectedCountBanner from "./SelectedCountBanner";
 import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
-import { Capacitor } from "@capacitor/core";
 import { StatusBar } from "@capacitor/status-bar";
 
 
@@ -503,30 +500,6 @@ const AppContainer = () => {
         setLoading(false);
     };
 
-    const generateGeoJSON = async (layer) => {
-        const query = layer.createQuery();
-        query.where = "1=1";
-        query.returnGeometry = true;
-        query.outFields = ["*"];
-        const results = await layer.queryFeatures(query);
-        console.log("DEBUG: primeros 5 attributes completos:", results.features.slice(0, 5).map(f => f.attributes));
-
-        return {
-            type: "FeatureCollection",
-            features: results.features
-                .map((f) => {
-                    const geom = arcgisToGeoJSON(f.geometry);
-                    if (!geom) return null;
-                    return {
-                        type: "Feature",
-                        geometry: geom,
-                        properties: f.attributes,
-                    };
-                })
-                .filter(Boolean), // Remove null features
-        };
-
-    };
     const arcgisToGeoJSON = (geometry) => {
         if (!geometry || !geometry.type) return null;
         switch (geometry.type) {
@@ -545,6 +518,7 @@ const AppContainer = () => {
                 return null;
         }
     };
+    
     const exportLayerAsShapefile = async (entry) => {
         const { layer, name } = entry;
         if (!layer) {
@@ -798,7 +772,7 @@ const AppContainer = () => {
 
             {/* Menu */}
             <TopMenu
-                style={{ top: `${topOffset}px` }}
+                style={{ top: `${topOffset / 2}px` }}
                 menuOpen={menuOpen}
                 toggleMenu={() => setMenuOpen((o) => !o)}
                 onOpenFiles={() => { fileInputRef.current.click(); setMenuOpen(false); }}

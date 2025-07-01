@@ -1,4 +1,4 @@
-package com.Isastur.SCPOMobileApp;
+package com.isastur.scpomobileapp;
 
 import com.getcapacitor.BridgeActivity;
 

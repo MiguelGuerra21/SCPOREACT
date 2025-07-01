@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">SCPOMobileApp</string>
     <string name="title_activity_main">SCPOMobileApp</string>
-    <string name="package_name">com.Isastur.SCPOMobileApp</string>
-    <string name="custom_url_scheme">com.Isastur.SCPOMobileApp</string>
+    <string name="package_name">com.isastur.scpomobileapp</string>
+    <string name="custom_url_scheme">com.isastur.scpomobileapp</string>
 </resources>

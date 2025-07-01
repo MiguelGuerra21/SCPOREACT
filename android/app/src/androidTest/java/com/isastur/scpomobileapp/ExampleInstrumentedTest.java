@@ -1,4 +1,4 @@
-package com.getcapacitor.myapp;
+package com.isastur.scpomobileapp;
 
 import static org.junit.Assert.*;
 
