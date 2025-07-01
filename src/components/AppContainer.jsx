@@ -20,7 +20,7 @@ import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 import { Capacitor } from "@capacitor/core";
-import {StatusBar} from "@capacitor/status-bar";
+import { StatusBar } from "@capacitor/status-bar";
 
 
 const AppContainer = () => {
@@ -224,21 +224,6 @@ const AppContainer = () => {
         layersRef.current = layers;
     }, [layers]);
 
-    useEffect(() => {
-        const ajustarOffset = async () => {
-            try {
-                await StatusBar.setOverlaysWebView({ overlay: true });
-                const isAndroid = /Android/i.test(navigator.userAgent);
-                if (isAndroid) {
-                    setTopOffset(28); // Ajusta este valor si el solapamiento persiste
-                }
-            } catch (e) {
-                console.warn("No se pudo ajustar la barra de estado:", e);
-            }
-        };
-        ajustarOffset();
-    }, []);
-
     // ----- Callback que envía MapView a este contenedor -----
     // Se pasará a MapViewWrapper para que, cuando se cree el view, hagamos viewRef.current = view
     const handleViewReady = (view) => {
@@ -263,7 +248,6 @@ const AppContainer = () => {
                 };
 
             case "linestring":
-                // Un solo camino (path)
                 return {
                     type: "polyline",
                     paths: [geo.coordinates], // [ [ [x,y], [x,y], ... ] ]
@@ -667,78 +651,7 @@ const AppContainer = () => {
         });
     }
 
-    // ----- Exportar capa como GeoJSON -----
-    const exportLayerAsGeoJSON = async (entry) => {
-        const layerView = entry.layerView;
-        if (!layerView) {
-            window.alert("La capa no está lista para exportar.");
-            return;
-        }
-        try {
-            const query = layerView.createQuery();
-            query.where = "1=1";
-            query.returnGeometry = true;
-            query.outFields = ["*"];
-            const result = await layerView.queryFeatures(query);
-            const featuresArcGIS = result.features;
-            if (!featuresArcGIS.length) {
-                window.alert("La capa no tiene features para exportar.");
-                return;
-            }
-            const geojsonFeatures = [];
-            for (let feat of featuresArcGIS) {
-                let geom = feat.geometry;
-                if (!geom) continue;
-                try {
-                    if (geom.spatialReference && geom.spatialReference.isWebMercator) {
-                        geom = webMercatorToGeographic(geom);
-                    }
-                } catch { }
-                let geojsonGeom = null;
-                switch (geom.type) {
-                    case "point":
-                        geojsonGeom = { type: "Point", coordinates: [geom.x, geom.y] };
-                        break;
-                    case "polyline":
-                        if (geom.paths.length === 1) {
-                            geojsonGeom = { type: "LineString", coordinates: geom.paths[0] };
-                        } else {
-                            geojsonGeom = { type: "MultiLineString", coordinates: geom.paths };
-                        }
-                        break;
-                    case "polygon":
-                        geojsonGeom = { type: "Polygon", coordinates: geom.rings };
-                        break;
-                    default:
-                        continue;
-                }
-                const props = { ...feat.attributes };
-                geojsonFeatures.push({
-                    type: "Feature",
-                    geometry: geojsonGeom,
-                    properties: props,
-                });
-            }
-            if (!geojsonFeatures.length) {
-                window.alert("No hay features válidas para exportar.");
-                return;
-            }
-            const geojsonFC = { type: "FeatureCollection", features: geojsonFeatures };
-            const geojsonString = JSON.stringify(geojsonFC, null, 2);
-            const blob = new Blob([geojsonString], { type: "application/json" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `${entry.name}.geojson`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        } catch (err) {
-            console.error("Error en exportLayerAsGeoJSON:", err);
-            window.alert("Error al exportar GeoJSON: " + err.message);
-        }
-    };
+    
 
     // ----- Toggle visibilidad capa -----
     const toggleLayerVisibility = (id) => {
@@ -868,27 +781,6 @@ const AppContainer = () => {
         setExportModalOpen(false);
     };
 
-    // ----- Exportar como GeoJSON: prompt -----
-    const handleExportGeoJSON = () => {
-        if (layers.length === 0) {
-            window.alert("No hay capas cargadas para guardar.");
-            return;
-        }
-        const opciones = layers.map((e, idx) => `${idx}: ${e.name}`).join("\n");
-        const respuesta = window.prompt(
-            "Seleccione el índice de la capa a guardar como GeoJSON (ejemplo: 0):\n" +
-            opciones
-        );
-        if (respuesta == null) return;
-        const idx = parseInt(respuesta, 10);
-        if (isNaN(idx) || idx < 0 || idx >= layers.length) {
-            window.alert("Índice inválido.");
-            return;
-        }
-        exportLayerAsGeoJSON(layers[idx]);
-    };
-
-
     // ----- JSX de render -----
     return (
         <div>
@@ -910,8 +802,7 @@ const AppContainer = () => {
                 menuOpen={menuOpen}
                 toggleMenu={() => setMenuOpen((o) => !o)}
                 onOpenFiles={() => { fileInputRef.current.click(); setMenuOpen(false); }}
-                onExportSHP={() => { setExportModalOpen(true); setMenuOpen(false); }}
-                onExportGeoJSON={() => { exportLayerAsGeoJSON(layers[0]); setMenuOpen(false); }}
+                onExportSHP={() => { handleExportRequest(); setMenuOpen(false); }}
                 onClearMap={handleClearMap}
                 onCloseApp={handleCloseApp}
             />
@@ -928,7 +819,38 @@ const AppContainer = () => {
             <LayerPanel
                 layers={layers}
                 onToggleVisibility={toggleLayerVisibility}
-                onCenterView={() => { }}
+                onCenterView={handleCenterView}
+                onRemoveLayer={(layerId) => {
+                    // 1) Confirm
+                    if (!window.confirm("¿Seguro que quieres eliminar esta capa?")) return;
+
+                    // 2) Remove from ArcGIS map
+                    const view = viewRef.current;
+                    const entry = layersRef.current.find((l) => l.id === layerId);
+                    if (view && entry) {
+                        view.map.layers.remove(entry.layer);
+                        entry.highlightHandle?.remove();
+                    }
+
+                    // 3) Compute new list
+                    const newLayers = layersRef.current.filter((l) => l.id !== layerId);
+
+                    if (newLayers.length === 0) {
+                        // If no layers left, clear everything (reset view, state, etc.)
+                        handleClearMap();
+                    } else {
+                        // Otherwise just update state
+                        setLayers(newLayers);
+                        layersRef.current = newLayers;
+
+                        // 4) Recompute selected count
+                        const totalSelected = newLayers.reduce(
+                            (sum, l) => sum + (l.selectedIds?.length || 0),
+                            0
+                        );
+                        setSelectedCount(totalSelected);
+                    }
+                }}
             />
 
             <SelectedCountBanner
@@ -962,5 +884,100 @@ const AppContainer = () => {
         </div>
     );
 };
+//#region GEOJSON Export (de momento no lo vamos a usar pero sabe dios...)
+// // ----- Exportar capa como GeoJSON -----
+    // const exportLayerAsGeoJSON = async (entry) => {
+    //     const layerView = entry.layerView;
+    //     if (!layerView) {
+    //         window.alert("La capa no está lista para exportar.");
+    //         return;
+    //     }
+    //     try {
+    //         const query = layerView.createQuery();
+    //         query.where = "1=1";
+    //         query.returnGeometry = true;
+    //         query.outFields = ["*"];
+    //         const result = await layerView.queryFeatures(query);
+    //         const featuresArcGIS = result.features;
+    //         if (!featuresArcGIS.length) {
+    //             window.alert("La capa no tiene features para exportar.");
+    //             return;
+    //         }
+    //         const geojsonFeatures = [];
+    //         for (let feat of featuresArcGIS) {
+    //             let geom = feat.geometry;
+    //             if (!geom) continue;
+    //             try {
+    //                 if (geom.spatialReference && geom.spatialReference.isWebMercator) {
+    //                     geom = webMercatorToGeographic(geom);
+    //                 }
+    //             } catch { }
+    //             let geojsonGeom = null;
+    //             switch (geom.type) {
+    //                 case "point":
+    //                     geojsonGeom = { type: "Point", coordinates: [geom.x, geom.y] };
+    //                     break;
+    //                 case "polyline":
+    //                     if (geom.paths.length === 1) {
+    //                         geojsonGeom = { type: "LineString", coordinates: geom.paths[0] };
+    //                     } else {
+    //                         geojsonGeom = { type: "MultiLineString", coordinates: geom.paths };
+    //                     }
+    //                     break;
+    //                 case "polygon":
+    //                     geojsonGeom = { type: "Polygon", coordinates: geom.rings };
+    //                     break;
+    //                 default:
+    //                     continue;
+    //             }
+    //             const props = { ...feat.attributes };
+    //             geojsonFeatures.push({
+    //                 type: "Feature",
+    //                 geometry: geojsonGeom,
+    //                 properties: props,
+    //             });
+    //         }
+    //         if (!geojsonFeatures.length) {
+    //             window.alert("No hay features válidas para exportar.");
+    //             return;
+    //         }
+    //         const geojsonFC = { type: "FeatureCollection", features: geojsonFeatures };
+    //         const geojsonString = JSON.stringify(geojsonFC, null, 2);
+    //         const blob = new Blob([geojsonString], { type: "application/json" });
+    //         const url = URL.createObjectURL(blob);
+    //         const a = document.createElement("a");
+    //         a.href = url;
+    //         a.download = `${entry.name}.geojson`;
+    //         document.body.appendChild(a);
+    //         a.click();
+    //         document.body.removeChild(a);
+    //         URL.revokeObjectURL(url);
+    //     } catch (err) {
+    //         console.error("Error en exportLayerAsGeoJSON:", err);
+    //         window.alert("Error al exportar GeoJSON: " + err.message);
+    //     }
+    // };
+
+    
+    // // ----- Exportar como GeoJSON: prompt -----
+    // const handleExportGeoJSON = () => {
+    //     if (layers.length === 0) {
+    //         window.alert("No hay capas cargadas para guardar.");
+    //         return;
+    //     }
+    //     const opciones = layers.map((e, idx) => `${idx}: ${e.name}`).join("\n");
+    //     const respuesta = window.prompt(
+    //         "Seleccione el índice de la capa a guardar como GeoJSON (ejemplo: 0):\n" +
+    //         opciones
+    //     );
+    //     if (respuesta == null) return;
+    //     const idx = parseInt(respuesta, 10);
+    //     if (isNaN(idx) || idx < 0 || idx >= layers.length) {
+    //         window.alert("Índice inválido.");
+    //         return;
+    //     }
+    //     exportLayerAsGeoJSON(layers[idx]);
+    // };
+    //#endregion
 
 export default AppContainer;
