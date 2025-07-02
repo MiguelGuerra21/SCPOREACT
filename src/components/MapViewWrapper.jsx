@@ -22,7 +22,7 @@ const MapViewWrapper = ({
   multiSelectModeRef.current = multiSelectMode;
 
   // Detectamos la plataforma (una sola vez)
-  const platform = Capacitor.getPlatform(); 
+  const platform = Capacitor.getPlatform();
   // 'web' | 'ios' | 'android' | 'electron' | 'pwa'
 
   useEffect(() => {
@@ -218,8 +218,8 @@ const MapViewWrapper = ({
           onClick={() => setMultiSelectMode(!multiSelectMode)}
           style={{
             position: "absolute",
-            bottom: "80px",
-            right: "20px",
+            right: 20,
+            top: "220px", 
             zIndex: 1002,
             padding: "10px 15px",
             borderRadius: "20px",
@@ -237,7 +237,7 @@ const MapViewWrapper = ({
       {/* Contenedor del mapa */}
       <div
         ref={mapDiv}
-        style={{ width: "100%", height: "calc(100vh)" }}
+        style={{ width: "100%", height: "calc(100vh - 35px)" }}
       />
     </>
   );

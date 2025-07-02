@@ -1,6 +1,7 @@
 // src/components/LayerPanel.jsx
 import React, { useState } from "react";
 import { Capacitor } from "@capacitor/core";
+import { FaChevronRight, FaChevronLeft } from "react-icons/fa";
 
 const LayerPanel = ({
   layers,
@@ -13,7 +14,7 @@ const LayerPanel = ({
 
   const containerStyle = {
     position: "absolute",
-    bottom: isAndroid ? 40 : 60,
+    bottom: isAndroid ? 70 : 60,
     left: 16,
     width: isOpen ? 240 : 40,
     backgroundColor: "#fff",
@@ -39,7 +40,6 @@ const LayerPanel = ({
     color: "#fff",
     fontSize: 18,
     cursor: "pointer",
-    transform: isOpen ? "rotate(0deg)" : "rotate(180deg)",
     transition: "transform 0.3s",
   };
 
@@ -94,7 +94,7 @@ const LayerPanel = ({
           onClick={() => setIsOpen((o) => !o)}
           aria-label={isOpen ? "Contraer panel" : "Expandir panel"}
         >
-          ⮜
+          {isOpen ? <FaChevronLeft /> : <FaChevronRight />}
         </button>
       </div>
 

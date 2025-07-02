@@ -1,6 +1,7 @@
 // src/components/SelectedCountBanner.jsx
 import React, { useState } from "react";
 import { Capacitor } from "@capacitor/core";
+import { FaChevronRight, FaChevronLeft } from "react-icons/fa";
 
 const SelectedCountBanner = ({
   count,
@@ -15,7 +16,7 @@ const SelectedCountBanner = ({
 
   const containerStyle = {
     position: "absolute",
-    bottom: isAndroid ? 40 : 60,
+    top: isAndroid ? 100 : 70,
     right: 16,
     width: isOpen ? 200 : 40,
     backgroundColor: "#fff",
@@ -88,7 +89,7 @@ const SelectedCountBanner = ({
           onClick={() => setIsOpen((o) => !o)}
           aria-label={isOpen ? "Contraer" : "Expandir"}
         >
-          {isOpen ? "⮞" : "⮜"}
+          {isOpen ? <FaChevronRight /> : <FaChevronLeft />}
         </button>
       </div>
 
@@ -102,7 +103,7 @@ const SelectedCountBanner = ({
             onMouseEnter={e => e.currentTarget.style.background = "linear-gradient(180deg, #238636 0%, #1b7b4a 100%)"}
             onMouseLeave={e => e.currentTarget.style.background = "linear-gradient(180deg, #28a745 0%, #1fa85a 100%)"}
           >
-            <span style={{ fontSize: 24, color: "#fff" }}>🖉</span>
+            <span style={{ fontSize: 24, color: "#fff" }}>✎</span>          
           </button>
         )}
         {/* Deseleccionar todo */}

@@ -15,7 +15,7 @@ const TopMenu = ({
 
   const containerStyle = {
     position: "absolute",
-    top: isAndroid ? 40 : 0,
+    top: isAndroid ? 35 : 0,
     left: 0,
     right: 0,
     height: 56,
