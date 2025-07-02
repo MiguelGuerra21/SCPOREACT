@@ -4,6 +4,7 @@ import JSZip from "jszip";
 import shpjs from "shpjs";
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
+import { App } from '@capacitor/app';
 import { saveAs } from "file-saver";
 import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
@@ -18,6 +19,7 @@ import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 import { StatusBar } from "@capacitor/status-bar";
+
 
 
 const AppContainer = () => {
@@ -43,8 +45,6 @@ const AppContainer = () => {
     const fileInputRef = useRef(null);
 
     const isAndroid = Capacitor.getPlatform() === "android"; // Detectar si es Android
-
-    const androidStoragePermissionGranted = false;
 
     // Compute if any selected features are polygons
     const hasPolygons = layers.some(entry =>
@@ -530,6 +530,7 @@ const AppContainer = () => {
         query.returnGeometry = true;
         query.outFields = ["*"];
         const result = await layer.queryFeatures(query);
+
         const geojson = {
             type: "FeatureCollection",
             features: result.features
@@ -538,14 +539,14 @@ const AppContainer = () => {
                     if (geom.spatialReference?.isWebMercator) {
                         geom = webMercatorToGeographic(geom);
                     }
+
                     let coords;
                     switch (geom.type) {
                         case "point":
                             coords = [geom.x, geom.y];
                             break;
                         case "polyline":
-                            coords =
-                                geom.paths.length === 1 ? geom.paths[0] : geom.paths;
+                            coords = geom.paths.length === 1 ? geom.paths[0] : geom.paths;
                             break;
                         case "polygon":
                             coords = geom.rings;
@@ -553,6 +554,7 @@ const AppContainer = () => {
                         default:
                             return null;
                     }
+
                     return {
                         type: "Feature",
                         geometry: Array.isArray(coords[0][0])
@@ -580,41 +582,30 @@ const AppContainer = () => {
 
         if (isAndroid) {
             try {
-                const perm = await Filesystem.requestPermissions();
-                if (perm.publicStorage === 'granted' || perm === 'granted') {
-                    // continuar
-                } else {
-                    alert("Permiso de almacenamiento no concedido.");
-                    return;
-                }
-            } catch (err) {
-                console.error("Error solicitando permisos:", err);
-                alert("No se pudieron solicitar permisos de almacenamiento.");
-                return;
-            }
-
-            try {
-                const buf = await zipBlob.arrayBuffer();
-                // const b64 = btoa(
-                //     new Uint8Array(buf).reduce((data, byte) => data + String.fromCharCode(byte), "")
-                // );
-                const b64 = await blobToBase64(zipBlob);
-                const path = fileName;
+                const req = requestManageAllFiles();
+                const base64 = await blobToBase64(zipBlob);
                 await Filesystem.writeFile({
-                    path,
-                    data: b64,
-                    directory: Directory.Documents,
+                    path: `Download/${fileName}`,
+                    data: base64,
+                    directory: Directory.ExternalStorage,
                     recursive: true,
                 });
-                alert(`Shapefile guardado en ${path}`);
+                alert(`Shapefile guardado en Download/${fileName}`);
             } catch (err) {
-                console.error("Error almacenando en disco:", err);
+                console.error("Error guardando archivo:", err);
                 alert("Error al guardar en dispositivo: " + err.message);
             }
         } else {
+            // Fallback para navegador
             saveAs(zipBlob, fileName);
         }
     };
+    //Not used in this version, but useful for future reference
+    async function requestManageAllFiles() {
+        await App.openUrl({
+            url: `android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION:package=${Capacitor.getAppInfo().id}`,
+        });
+    }
 
     function blobToBase64(blob) {
         return new Promise((resolve, reject) => {
@@ -625,7 +616,7 @@ const AppContainer = () => {
         });
     }
 
-    
+
 
     // ----- Toggle visibilidad capa -----
     const toggleLayerVisibility = (id) => {
@@ -860,98 +851,98 @@ const AppContainer = () => {
 };
 //#region GEOJSON Export (de momento no lo vamos a usar pero sabe dios...)
 // // ----- Exportar capa como GeoJSON -----
-    // const exportLayerAsGeoJSON = async (entry) => {
-    //     const layerView = entry.layerView;
-    //     if (!layerView) {
-    //         window.alert("La capa no está lista para exportar.");
-    //         return;
-    //     }
-    //     try {
-    //         const query = layerView.createQuery();
-    //         query.where = "1=1";
-    //         query.returnGeometry = true;
-    //         query.outFields = ["*"];
-    //         const result = await layerView.queryFeatures(query);
-    //         const featuresArcGIS = result.features;
-    //         if (!featuresArcGIS.length) {
-    //             window.alert("La capa no tiene features para exportar.");
-    //             return;
-    //         }
-    //         const geojsonFeatures = [];
-    //         for (let feat of featuresArcGIS) {
-    //             let geom = feat.geometry;
-    //             if (!geom) continue;
-    //             try {
-    //                 if (geom.spatialReference && geom.spatialReference.isWebMercator) {
-    //                     geom = webMercatorToGeographic(geom);
-    //                 }
-    //             } catch { }
-    //             let geojsonGeom = null;
-    //             switch (geom.type) {
-    //                 case "point":
-    //                     geojsonGeom = { type: "Point", coordinates: [geom.x, geom.y] };
-    //                     break;
-    //                 case "polyline":
-    //                     if (geom.paths.length === 1) {
-    //                         geojsonGeom = { type: "LineString", coordinates: geom.paths[0] };
-    //                     } else {
-    //                         geojsonGeom = { type: "MultiLineString", coordinates: geom.paths };
-    //                     }
-    //                     break;
-    //                 case "polygon":
-    //                     geojsonGeom = { type: "Polygon", coordinates: geom.rings };
-    //                     break;
-    //                 default:
-    //                     continue;
-    //             }
-    //             const props = { ...feat.attributes };
-    //             geojsonFeatures.push({
-    //                 type: "Feature",
-    //                 geometry: geojsonGeom,
-    //                 properties: props,
-    //             });
-    //         }
-    //         if (!geojsonFeatures.length) {
-    //             window.alert("No hay features válidas para exportar.");
-    //             return;
-    //         }
-    //         const geojsonFC = { type: "FeatureCollection", features: geojsonFeatures };
-    //         const geojsonString = JSON.stringify(geojsonFC, null, 2);
-    //         const blob = new Blob([geojsonString], { type: "application/json" });
-    //         const url = URL.createObjectURL(blob);
-    //         const a = document.createElement("a");
-    //         a.href = url;
-    //         a.download = `${entry.name}.geojson`;
-    //         document.body.appendChild(a);
-    //         a.click();
-    //         document.body.removeChild(a);
-    //         URL.revokeObjectURL(url);
-    //     } catch (err) {
-    //         console.error("Error en exportLayerAsGeoJSON:", err);
-    //         window.alert("Error al exportar GeoJSON: " + err.message);
-    //     }
-    // };
+// const exportLayerAsGeoJSON = async (entry) => {
+//     const layerView = entry.layerView;
+//     if (!layerView) {
+//         window.alert("La capa no está lista para exportar.");
+//         return;
+//     }
+//     try {
+//         const query = layerView.createQuery();
+//         query.where = "1=1";
+//         query.returnGeometry = true;
+//         query.outFields = ["*"];
+//         const result = await layerView.queryFeatures(query);
+//         const featuresArcGIS = result.features;
+//         if (!featuresArcGIS.length) {
+//             window.alert("La capa no tiene features para exportar.");
+//             return;
+//         }
+//         const geojsonFeatures = [];
+//         for (let feat of featuresArcGIS) {
+//             let geom = feat.geometry;
+//             if (!geom) continue;
+//             try {
+//                 if (geom.spatialReference && geom.spatialReference.isWebMercator) {
+//                     geom = webMercatorToGeographic(geom);
+//                 }
+//             } catch { }
+//             let geojsonGeom = null;
+//             switch (geom.type) {
+//                 case "point":
+//                     geojsonGeom = { type: "Point", coordinates: [geom.x, geom.y] };
+//                     break;
+//                 case "polyline":
+//                     if (geom.paths.length === 1) {
+//                         geojsonGeom = { type: "LineString", coordinates: geom.paths[0] };
+//                     } else {
+//                         geojsonGeom = { type: "MultiLineString", coordinates: geom.paths };
+//                     }
+//                     break;
+//                 case "polygon":
+//                     geojsonGeom = { type: "Polygon", coordinates: geom.rings };
+//                     break;
+//                 default:
+//                     continue;
+//             }
+//             const props = { ...feat.attributes };
+//             geojsonFeatures.push({
+//                 type: "Feature",
+//                 geometry: geojsonGeom,
+//                 properties: props,
+//             });
+//         }
+//         if (!geojsonFeatures.length) {
+//             window.alert("No hay features válidas para exportar.");
+//             return;
+//         }
+//         const geojsonFC = { type: "FeatureCollection", features: geojsonFeatures };
+//         const geojsonString = JSON.stringify(geojsonFC, null, 2);
+//         const blob = new Blob([geojsonString], { type: "application/json" });
+//         const url = URL.createObjectURL(blob);
+//         const a = document.createElement("a");
+//         a.href = url;
+//         a.download = `${entry.name}.geojson`;
+//         document.body.appendChild(a);
+//         a.click();
+//         document.body.removeChild(a);
+//         URL.revokeObjectURL(url);
+//     } catch (err) {
+//         console.error("Error en exportLayerAsGeoJSON:", err);
+//         window.alert("Error al exportar GeoJSON: " + err.message);
+//     }
+// };
 
-    
-    // // ----- Exportar como GeoJSON: prompt -----
-    // const handleExportGeoJSON = () => {
-    //     if (layers.length === 0) {
-    //         window.alert("No hay capas cargadas para guardar.");
-    //         return;
-    //     }
-    //     const opciones = layers.map((e, idx) => `${idx}: ${e.name}`).join("\n");
-    //     const respuesta = window.prompt(
-    //         "Seleccione el índice de la capa a guardar como GeoJSON (ejemplo: 0):\n" +
-    //         opciones
-    //     );
-    //     if (respuesta == null) return;
-    //     const idx = parseInt(respuesta, 10);
-    //     if (isNaN(idx) || idx < 0 || idx >= layers.length) {
-    //         window.alert("Índice inválido.");
-    //         return;
-    //     }
-    //     exportLayerAsGeoJSON(layers[idx]);
-    // };
-    //#endregion
+
+// // ----- Exportar como GeoJSON: prompt -----
+// const handleExportGeoJSON = () => {
+//     if (layers.length === 0) {
+//         window.alert("No hay capas cargadas para guardar.");
+//         return;
+//     }
+//     const opciones = layers.map((e, idx) => `${idx}: ${e.name}`).join("\n");
+//     const respuesta = window.prompt(
+//         "Seleccione el índice de la capa a guardar como GeoJSON (ejemplo: 0):\n" +
+//         opciones
+//     );
+//     if (respuesta == null) return;
+//     const idx = parseInt(respuesta, 10);
+//     if (isNaN(idx) || idx < 0 || idx >= layers.length) {
+//         window.alert("Índice inválido.");
+//         return;
+//     }
+//     exportLayerAsGeoJSON(layers[idx]);
+// };
+//#endregion
 
 export default AppContainer;
