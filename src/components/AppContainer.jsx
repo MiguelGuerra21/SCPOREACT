@@ -580,6 +580,15 @@ const AppContainer = () => {
 
         if (isAndroid) {
             try {
+                // Check if permission granted
+                const hasPermission = await Filesystem.checkPermissions().then(res =>
+                    res.publicStorage === 'granted'
+                );
+
+                if (!hasPermission) {
+                    // Request special storage access
+                    await Filesystem.requestPermissions();
+                }
                 const base64 = await blobToBase64(zipBlob);
                 await Filesystem.writeFile({
                     path: `Download/${fileName}`,
@@ -589,11 +598,19 @@ const AppContainer = () => {
                 });
                 alert(`Shapefile guardado en Download/${fileName}`);
             } catch (err) {
-                console.error("Error guardando archivo:", err);
-                alert("Error al guardar en dispositivo: " + err.message);
+                console.error("File save error:", err);
+                if (err.message.includes("MANAGE_EXTERNAL_STORAGE")) {
+                    // Show permission guide
+                    alert("Enable file access in app settings");
+                    // Open system permission settings
+                    await App.openUrl({
+                        url: "android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION"
+                    });
+                } else {
+                    alert("Save failed: " + err.message);
+                }
             }
         } else {
-            // Fallback para navegador
             saveAs(zipBlob, fileName);
         }
     };
