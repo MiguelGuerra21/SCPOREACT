@@ -582,46 +582,44 @@ const AppContainer = () => {
 
         if (isAndroid) {
             try {
-                // Check if permission granted
-                const hasPermission = await Filesystem.checkPermissions().then(res =>
-                    res.publicStorage === 'granted'
-                );
+                // 1) Accede al plugin desde el namespace global de Cordova
+                var saf = window.cordova && window.cordova.plugins && window.cordova.plugins.safMediastore;
+                if (!saf) {
+                    alert('El plugin SAF‑MediaStore no está disponible.');
+                    return;
+                }
 
-                if (!hasPermission) {
-                    // Request special storage access
-                    await Filesystem.requestPermissions();
-                }
-                const base64 = await blobToBase64(zipBlob);
-                await Filesystem.writeFile({
-                    path: `Download/${fileName}`,
-                    data: base64,
-                    directory: Directory.ExternalStorage,
-                    recursive: true,
-                });
-                alert(`Shapefile guardado en Download/${fileName}`);
-            } catch (err) {
-                console.error("File save error:", err);
-                if (err.message.includes("MANAGE_EXTERNAL_STORAGE")) {
-                    // Show permission guide
-                    alert("Enable file access in app settings");
-                    // Open system permission settings
-                    await App.openUrl({
-                        url: "android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION"
+                // 2) Convierte el Blob a base64
+                blobToBase64(zipBlob).then(function (base64) {
+                    // 3) Escribe el archivo en la carpeta Downloads
+                    saf.writeFile({
+                        data: base64,
+                        filename: fileName
+                        // opcional: folder y subFolder si quieres subcarpetas
+                        // folder: 'MiApp',
+                        // subFolder: 'Zips'
+                    }).then(function (uri) {
+                        console.log('Guardado en URI:', uri);
+                        alert('Shapefile guardado correctamente en Descargas.');
+                    }).catch(function (err) {
+                        console.error('Error al escribir con SAF‑MediaStore:', err);
+                        alert('Error al guardar con SAF‑MediaStore: ' + err.message);
                     });
-                } else {
-                    alert("Save failed: " + err.message);
-                }
+                }).catch(function (err) {
+                    console.error('Error convirtiendo Blob a Base64:', err);
+                    alert('Error preparando datos para guardado: ' + err.message);
+                });
+
+            } catch (err) {
+                console.error('Error inesperado:', err);
+                alert('Error al guardar con SAF‑MediaStore: ' + err.message);
             }
         } else {
+            // Fallback para web / escritorio
             saveAs(zipBlob, fileName);
         }
     };
-    //Not used in this version, but useful for future reference
-    async function requestManageAllFiles() {
-        await App.openUrl({
-            url: `android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION:package=${Capacitor.getAppInfo().id}`,
-        });
-    }
+
 
     function blobToBase64(blob) {
         return new Promise((resolve, reject) => {
