@@ -4,7 +4,6 @@ import JSZip from "jszip";
 import shpjs from "shpjs";
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
-import { App } from '@capacitor/app';
 import { saveAs } from "file-saver";
 import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
@@ -18,7 +17,6 @@ import SelectedCountBanner from "./SelectedCountBanner";
 import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
-import { StatusBar } from "@capacitor/status-bar";
 
 
 
@@ -582,7 +580,6 @@ const AppContainer = () => {
 
         if (isAndroid) {
             try {
-                const req = requestManageAllFiles();
                 const base64 = await blobToBase64(zipBlob);
                 await Filesystem.writeFile({
                     path: `Download/${fileName}`,
@@ -600,12 +597,6 @@ const AppContainer = () => {
             saveAs(zipBlob, fileName);
         }
     };
-    //Not used in this version, but useful for future reference
-    async function requestManageAllFiles() {
-        await App.openUrl({
-            url: `android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION:package=${Capacitor.getAppInfo().id}`,
-        });
-    }
 
     function blobToBase64(blob) {
         return new Promise((resolve, reject) => {
