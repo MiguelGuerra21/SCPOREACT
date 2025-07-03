@@ -5,6 +5,7 @@
   "main": "public/electron.js",
   "homepage": "./",
   "dependencies": {
+    "@adobe/css-tools": "^4.4.3",
     "@arcgis/core": "^4.32.10",
     "@capacitor/app": "^7.0.1",
     "@capacitor/filesystem": "^7.1.1",
