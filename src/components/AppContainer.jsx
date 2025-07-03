@@ -711,7 +711,9 @@ const AppContainer = () => {
     };
 
     // ----- Menú: abrir/cerrar -----
-    const toggleMenu = () => setMenuOpen((o) => !o);
+    const toggleMenu = (val) =>
+        setMenuOpen(o => typeof val === 'boolean' ? val : !o);
+
     const handleOpenFiles = () => {
         // Dispara el input oculto
         if (fileInputRef.current) fileInputRef.current.click();
@@ -779,7 +781,8 @@ const AppContainer = () => {
             <TopMenu
                 style={{ top: `${topOffset / 2}px` }}
                 menuOpen={menuOpen}
-                toggleMenu={() => setMenuOpen((o) => !o)}
+                toggleMenu={toggleMenu}
+                closeMenu={() => setMenuOpen(false)}
                 onOpenFiles={() => { fileInputRef.current.click(); setMenuOpen(false); }}
                 onExportSHP={() => { handleExportRequest(); setMenuOpen(false); }}
                 onClearMap={handleClearMap}

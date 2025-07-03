@@ -1,5 +1,5 @@
 // src/components/TopMenu.jsx
-import React from "react";
+import React, { useRef, useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
 
 const TopMenu = ({
@@ -7,11 +7,23 @@ const TopMenu = ({
   toggleMenu,
   onOpenFiles,
   onExportSHP,
-  onExportGeoJSON,
   onClearMap,
   onCloseApp,
 }) => {
   const isAndroid = Capacitor.getPlatform() === "android";
+  const containerRef = useRef(null);
+
+  // Effect: when menuOpen, listen for clicks outside
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleOutsideClick = e => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        toggleMenu(false);     // now this *does* set it to false
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [menuOpen, toggleMenu]);
 
   const containerStyle = {
     position: "absolute",
@@ -65,7 +77,7 @@ const TopMenu = ({
   };
 
   return (
-    <div style={containerStyle}>
+    <div style={containerStyle} ref={containerRef}>
       <button
         style={{
           ...buttonStyle,
@@ -73,8 +85,7 @@ const TopMenu = ({
             ? { backgroundColor: "#e0e0e0" }
             : { backgroundColor: "transparent" }),
         }}
-        onClick={toggleMenu}
-      >
+        onClick={() => toggleMenu()}      >
         {/* Gradient Hamburger Icon */}
         <svg
           style={iconStyle}
