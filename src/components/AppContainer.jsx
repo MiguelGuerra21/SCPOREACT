@@ -863,7 +863,6 @@ const AppContainer = () => {
         </div>
     );
 };
-//#region GEOJSON Export (de momento no lo vamos a usar pero sabe dios...)
 // // ----- Exportar capa como GeoJSON -----
 // const exportLayerAsGeoJSON = async (entry) => {
 //     const layerView = entry.layerView;
