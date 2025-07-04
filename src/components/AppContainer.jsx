@@ -20,6 +20,7 @@ import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 import GeoJSONLayer from "@arcgis/core/layers/GeoJSONLayer";
+import { PermissionsAndroid, Platform } from 'react-native';
 
 
 
@@ -546,42 +547,65 @@ const AppContainer = () => {
         const fileName = `${name}.zip`;
 
         if (isAndroid) {
-            // 1) Resolve the Downloads folder
-            window.resolveLocalFileSystemURL(
-                cordova.file.externalRootDirectory + 'Download/',
-                (dirEntry) => {
-                    // 2) Create or open the target file
-                    dirEntry.getFile(
-                        fileName,
-                        { create: true, exclusive: false },
-                        (fileEntry) => {
-                            // 3) Create a writer
-                            fileEntry.createWriter((writer) => {
-                                writer.onwriteend = () => {
-                                    alert('Shapefile guardado correctamente en Descargas');
-                                };
+            try {
+                // 1) Ask for WRITE_EXTERNAL_STORAGE (only on Android < 11)
+                let granted = true;
+                if (Platform.Version < 30) {
+                    granted = await PermissionsAndroid.request(
+                        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
+                        {
+                            title: 'Permiso de almacenamiento',
+                            message: 'Necesitamos permiso para guardar el shapefile en tu dispositivo',
+                            buttonPositive: 'Conceder',
+                            buttonNegative: 'Cancelar'
+                        }
+                    ) === PermissionsAndroid.RESULTS.GRANTED;
+                }
+
+                if (!granted || Platform.Version >= 30) {
+                    // On Android 11+ or if WRITE_EXTERNAL_STORAGE rejected, use SAF‑MediaStore
+                    const saf = window.cordova?.plugins?.safMediastore;
+                    if (!saf) throw new Error('SAF‑MediaStore plugin no disponible');
+
+                    // 2) Ask user where to save
+                    const uri = await saf.createFile('application/zip', fileName);
+                    if (!uri) throw new Error('Guardado cancelado');
+
+                    // 3) Stream slices of the blob
+                    const buffer = await zipBlob.arrayBuffer();
+                    const CHUNK = 64 * 1024;
+                    let offset = 0;
+
+                    while (offset < buffer.byteLength) {
+                        const slice = new Uint8Array(buffer, offset, Math.min(CHUNK, buffer.byteLength - offset));
+                        await saf.writeFile({ uri, data: slice, append: offset > 0 });
+                        offset += slice.length;
+                    }
+                    alert('Shapefile guardado correctamente.');
+                } else {
+                    // 4) Permission granted on Android < 11: use Cordova FileWriter
+                    window.resolveLocalFileSystemURL(
+                        cordova.file.externalRootDirectory + 'Download/',
+                        (dirEntry) => dirEntry.getFile(
+                            fileName,
+                            { create: true, exclusive: false },
+                            (fileEntry) => fileEntry.createWriter((writer) => {
+                                writer.onwriteend = () => alert('Shapefile guardado correctamente.');
                                 writer.onerror = (e) => {
                                     console.error('Write error:', e);
-                                    alert('Error al guardar archivo: ' + e.toString());
+                                    alert('Error guardando archivo: ' + e.toString());
                                 };
-                                // 4) Write the raw Blob—no Base64!
                                 writer.write(zipBlob);
-                            }, (err) => {
-                                console.error('Error creating writer:', err);
-                                alert('Error creando FileWriter: ' + err.toString());
-                            });
-                        },
-                        (err) => {
-                            console.error('Error getting fileEntry:', err);
-                            alert('Error accediendo al archivo: ' + err.toString());
-                        }
+                            }, err => { throw err; }),
+                            err => { throw err; }
+                        ),
+                        err => { throw err; }
                     );
-                },
-                (err) => {
-                    console.error('Error accessing Download folder:', err);
-                    alert('No se pudo acceder a Descargas: ' + err.toString());
                 }
-            );
+            } catch (err) {
+                console.error('Error durante exportación:', err);
+                alert('No se pudo guardar el archivo: ' + err.message);
+            }
         } else {
             // Web fallback
             saveAs(zipBlob, fileName);
