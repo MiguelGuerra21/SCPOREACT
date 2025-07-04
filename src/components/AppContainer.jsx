@@ -546,41 +546,44 @@ const AppContainer = () => {
         const fileName = `${name}.zip`;
 
         if (isAndroid) {
-            try {
-                // 1) Accede al plugin desde el namespace global de Cordova
-                var saf = window.cordova && window.cordova.plugins && window.cordova.plugins.safMediastore;
-                if (!saf) {
-                    alert('El plugin SAF‑MediaStore no está disponible.');
-                    return;
+            // 1) Resolve the Downloads folder
+            window.resolveLocalFileSystemURL(
+                cordova.file.externalRootDirectory + 'Download/',
+                (dirEntry) => {
+                    // 2) Create or open the target file
+                    dirEntry.getFile(
+                        fileName,
+                        { create: true, exclusive: false },
+                        (fileEntry) => {
+                            // 3) Create a writer
+                            fileEntry.createWriter((writer) => {
+                                writer.onwriteend = () => {
+                                    alert('Shapefile guardado correctamente en Descargas');
+                                };
+                                writer.onerror = (e) => {
+                                    console.error('Write error:', e);
+                                    alert('Error al guardar archivo: ' + e.toString());
+                                };
+                                // 4) Write the raw Blob—no Base64!
+                                writer.write(zipBlob);
+                            }, (err) => {
+                                console.error('Error creating writer:', err);
+                                alert('Error creando FileWriter: ' + err.toString());
+                            });
+                        },
+                        (err) => {
+                            console.error('Error getting fileEntry:', err);
+                            alert('Error accediendo al archivo: ' + err.toString());
+                        }
+                    );
+                },
+                (err) => {
+                    console.error('Error accessing Download folder:', err);
+                    alert('No se pudo acceder a Descargas: ' + err.toString());
                 }
-
-                // 2) Convierte el Blob a base64
-                blobToBase64(zipBlob).then(function (base64) {
-                    // 3) Escribe el archivo en la carpeta Downloads
-                    saf.writeFile({
-                        data: base64,
-                        filename: fileName
-                        // opcional: folder y subFolder si quieres subcarpetas
-                        // folder: 'MiApp',
-                        // subFolder: 'Zips'
-                    }).then(function (uri) {
-                        console.log('Guardado en URI:', uri);
-                        alert('Shapefile guardado correctamente en Descargas.');
-                    }).catch(function (err) {
-                        console.error('Error al escribir con SAF‑MediaStore:', err);
-                        alert('Error al guardar con SAF‑MediaStore: ' + err.message);
-                    });
-                }).catch(function (err) {
-                    console.error('Error convirtiendo Blob a Base64:', err);
-                    alert('Error preparando datos para guardado: ' + err.message);
-                });
-
-            } catch (err) {
-                console.error('Error inesperado:', err);
-                alert('Error al guardar con SAF‑MediaStore: ' + err.message);
-            }
+            );
         } else {
-            // Fallback para web / escritorio
+            // Web fallback
             saveAs(zipBlob, fileName);
         }
     };
