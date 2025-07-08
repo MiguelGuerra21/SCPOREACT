@@ -20,7 +20,6 @@ import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 import GeoJSONLayer from "@arcgis/core/layers/GeoJSONLayer";
-import { PermissionsAndroid, Platform } from 'react-native';
 
 
 
@@ -548,60 +547,37 @@ const AppContainer = () => {
 
         if (isAndroid) {
             try {
-                // 1) Ask for WRITE_EXTERNAL_STORAGE (only on Android < 11)
-                let granted = true;
-                if (Platform.Version < 30) {
-                    granted = await PermissionsAndroid.request(
-                        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-                        {
-                            title: 'Permiso de almacenamiento',
-                            message: 'Necesitamos permiso para guardar el shapefile en tu dispositivo',
-                            buttonPositive: 'Conceder',
-                            buttonNegative: 'Cancelar'
-                        }
-                    ) === PermissionsAndroid.RESULTS.GRANTED;
+                // 1) Ask SAF‑MediaStore for a new file URI
+                const saf = window.cordova?.plugins?.safMediastore;
+                if (!saf) throw new Error('SAF‑MediaStore plugin no disponible');
+
+                const uri = await saf.createFile('application/zip', fileName);
+                if (!uri) throw new Error('Guardado cancelado');
+
+                // 2) Stream the blob by slicing it into small ArrayBuffers
+                const CHUNK_SIZE = 64 * 1024; // 64 KB
+                let offset = 0;
+                let append = false;
+
+                while (offset < zipBlob.size) {
+                    // slice off the next 64 KB (or remainder)
+                    const end = Math.min(offset + CHUNK_SIZE, zipBlob.size);
+                    const slice = zipBlob.slice(offset, end);
+                    // only this slice is loaded into memory
+                    const buffer = await slice.arrayBuffer();
+
+                    // write it
+                    await saf.writeFile({
+                        uri,
+                        data: new Uint8Array(buffer),
+                        append
+                    });
+                    append = true;
+                    offset = end;
                 }
 
-                if (!granted || Platform.Version >= 30) {
-                    // On Android 11+ or if WRITE_EXTERNAL_STORAGE rejected, use SAF‑MediaStore
-                    const saf = window.cordova?.plugins?.safMediastore;
-                    if (!saf) throw new Error('SAF‑MediaStore plugin no disponible');
+                alert('Shapefile guardado correctamente.');
 
-                    // 2) Ask user where to save
-                    const uri = await saf.createFile('application/zip', fileName);
-                    if (!uri) throw new Error('Guardado cancelado');
-
-                    // 3) Stream slices of the blob
-                    const buffer = await zipBlob.arrayBuffer();
-                    const CHUNK = 64 * 1024;
-                    let offset = 0;
-
-                    while (offset < buffer.byteLength) {
-                        const slice = new Uint8Array(buffer, offset, Math.min(CHUNK, buffer.byteLength - offset));
-                        await saf.writeFile({ uri, data: slice, append: offset > 0 });
-                        offset += slice.length;
-                    }
-                    alert('Shapefile guardado correctamente.');
-                } else {
-                    // 4) Permission granted on Android < 11: use Cordova FileWriter
-                    window.resolveLocalFileSystemURL(
-                        cordova.file.externalRootDirectory + 'Download/',
-                        (dirEntry) => dirEntry.getFile(
-                            fileName,
-                            { create: true, exclusive: false },
-                            (fileEntry) => fileEntry.createWriter((writer) => {
-                                writer.onwriteend = () => alert('Shapefile guardado correctamente.');
-                                writer.onerror = (e) => {
-                                    console.error('Write error:', e);
-                                    alert('Error guardando archivo: ' + e.toString());
-                                };
-                                writer.write(zipBlob);
-                            }, err => { throw err; }),
-                            err => { throw err; }
-                        ),
-                        err => { throw err; }
-                    );
-                }
             } catch (err) {
                 console.error('Error durante exportación:', err);
                 alert('No se pudo guardar el archivo: ' + err.message);

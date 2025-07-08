@@ -27,7 +27,6 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-icons": "^5.5.0",
-    "react-native": "^0.80.1",
     "react-scripts": "5.0.1",
     "shp-write": "^0.3.2",
     "shpjs": "^6.1.0",
