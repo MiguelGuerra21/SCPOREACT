@@ -7,23 +7,37 @@ const LayerPanel = ({
   layers,
   onToggleVisibility,
   onCenterView,
-  onRemoveLayer,        // ← new prop
+  onRemoveLayer,
+  embedded = false, // new prop
 }) => {
   const [isOpen, setIsOpen] = useState(true);
   const isAndroid = Capacitor.getPlatform() === "android";
 
-  const containerStyle = {
-    position: "absolute",
-    bottom: isAndroid ? 70 : 60,
-    left: 16,
-    width: isOpen ? 240 : 40,
-    backgroundColor: "#fff",
-    borderRadius: 8,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-    overflow: "hidden",
-    transition: "width 0.3s",
-    zIndex: 1000,
-  };
+  // Switch container style when embedded in TopMenu
+  const containerStyle = embedded
+    ? {
+        position: "relative",
+        width: "100%",
+        backgroundColor: "#fff",
+        borderRadius: 8,
+        boxShadow: "none",
+        overflow: "visible",
+        marginTop: 8,
+        transition: "none",
+        zIndex: "auto",
+      }
+    : {
+        position: "absolute",
+        bottom: isAndroid ? 70 : 60,
+        left: 16,
+        width: isOpen ? 240 : 40,
+        backgroundColor: "#fff",
+        borderRadius: 8,
+        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+        overflow: "hidden",
+        transition: "width 0.3s",
+        zIndex: 1000,
+      };
 
   const headerStyle = {
     display: "flex",
@@ -46,8 +60,8 @@ const LayerPanel = ({
   const contentStyle = {
     display: isOpen ? "block" : "none",
     padding: "8px 12px",
-    maxHeight: "60vh",
-    overflowY: "auto",
+    maxHeight: embedded ? "none" : "60vh",
+    overflowY: embedded ? "visible" : "auto",
   };
 
   const layerItemStyle = {
@@ -68,7 +82,7 @@ const LayerPanel = ({
     padding: 4,
     marginLeft: 8,
     cursor: "pointer",
-    color: "#000",        // black
+    color: "#000",
     fontSize: 16,
     lineHeight: 1,
   };
@@ -140,10 +154,9 @@ const LayerPanel = ({
             >
               {entry.name}
             </span>
-            {/* Remove layer Button */}
             <button
               style={removeBtnStyle}
-              onClick={() =>  onRemoveLayer(entry.id)}
+              onClick={() => onRemoveLayer(entry.id)}
               title="Eliminar capa"
             >
               🗑️

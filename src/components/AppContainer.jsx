@@ -14,7 +14,6 @@ import Extent from "@arcgis/core/geometry/Extent";
 import TopMenu from "./TopMenu";
 import FileLoader from "./FileLoader";
 import MapViewWrapper from "./MapViewWrapper";
-import LayerPanel from "./LayerPanel.jsx";
 import SelectedCountBanner from "./SelectedCountBanner";
 import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
@@ -236,43 +235,50 @@ const AppContainer = () => {
     // incluyendo MultiLineString y MultiPolygon
     const convertGeometry = (geo) => {
         if (!geo) return null;
+
+        const stripCoords = (coords) => {
+            if (!Array.isArray(coords)) return coords;
+            if (typeof coords[0] === "number") {
+                // Punto: [x, y, z?, m?] → solo dejamos [x, y]
+                return coords.slice(0, 2);
+            }
+            // Recursivo para estructuras anidadas
+            return coords.map(stripCoords);
+        };
+
         const type = geo.type.toLowerCase();
+        const cleanCoords = stripCoords(geo.coordinates);
         switch (type) {
             case "point":
                 return {
                     type: "point",
-                    x: geo.coordinates[0],
-                    y: geo.coordinates[1],
+                    x: cleanCoords[0],
+                    y: cleanCoords[1],
                 };
 
             case "linestring":
                 return {
                     type: "polyline",
-                    paths: [geo.coordinates], // [ [ [x,y], [x,y], ... ] ]
+                    paths: [cleanCoords],
                 };
 
             case "multilinestring":
                 // Varios caminos: cada elemento de coordinates es un array de puntos
                 return {
                     type: "polyline",
-                    paths: geo.coordinates, // [ [ [x1,y1],... ], [ [x2,y2],... ], ... ]
+                    paths: cleanCoords,
                 };
 
             case "polygon":
                 // coordinates: [ ringExterior, ringInterior1?, ... ]
                 return {
                     type: "polygon",
-                    rings: geo.coordinates, // [ [ [x,y],... ], [ [x,y],... ], ... ]
+                    rings: cleanCoords,
                 };
 
             case "multipolygon":
-                // coordinates: [ polygon1, polygon2, ... ]
-                // donde cada polygon es [ ringExterior, ringInterior1?, ... ]
-                // ArcGIS espera en `rings` un array plano de todos los anillos:
-                //   rings: [ ring1, ring2, ..., ringN ]
                 {
-                    // Aplanamos un nivel: obtenemos todos los anillos de cada polígono
-                    const rings = geo.coordinates.flat();
+                    const rings = cleanCoords.flat();
                     return {
                         type: "polygon",
                         rings,
@@ -340,113 +346,146 @@ const AppContainer = () => {
         }
 
         try {
-            // 1. Leer el ArrayBuffer y comprobar .prj
             const arrayBuffer = await file.arrayBuffer();
             const zip = await JSZip.loadAsync(arrayBuffer);
-            const hasPrj = Object.keys(zip.files).some((n) =>
-                n.toLowerCase().endsWith(".prj")
+            const fileNames = Object.keys(zip.files);
+            const hasPrj = fileNames.some((name) =>
+                name.toLowerCase().endsWith(".prj")
             );
             if (!hasPrj) {
-                window.alert("No se puede mostrar una capa no geolocalizada");
+                window.alert(
+                    "No se puede mostrar una capa no geolocalizada junto a las localizadas"
+                );
                 return;
             }
 
-            // 2. Convertir a GeoJSON
             const geojson = await shpjs(arrayBuffer);
-            if (!geojson.features?.length) {
+            if (!geojson || !geojson.features?.length) {
                 console.warn("No valid features found in shapefile:", file.name);
                 return;
             }
 
-            // 3. Preparar renderer y popupTemplate
+            const [r, g, b] = generateColorForIndex(newId);
+            const fillColor = [r, g, b, 0.3];
+            const outlineColor = [r, g, b, 1];
+
+            const geomType0 = geojson.features[0]?.geometry?.type;
+            let geometryType = "polygon";
+            if (geomType0 === "Point") geometryType = "point";
+            else if (geomType0 === "LineString" || geomType0 === "MultiLineString")
+                geometryType = "polyline";
+
             const firstProps = geojson.features[0]?.properties || {};
             const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
-                let type = "string";
+                let type;
                 if (typeof value === "number") type = "double";
                 else if (typeof value === "boolean") type = "boolean";
                 else if (value instanceof Date) type = "date";
+                else type = "string";
                 return { name: key, alias: key, type };
             });
 
-            const geomType0 = geojson.features[0].geometry.type;
-            const geometryType = geomType0 === "Point"
-                ? "point"
-                : /Line/.test(geomType0)
-                    ? "polyline"
-                    : "polygon";
-
-            const [r, g, b] = generateColorForIndex(newId);
-            const renderer = {
-                type: "simple",
-                symbol: {
-                    type:
-                        geometryType === "point"
-                            ? "simple-marker"
-                            : geometryType === "polyline"
-                                ? "simple-line"
-                                : "simple-fill",
-                    color: geometryType === "point" ? [r, g, b] : [r, g, b, 0.3],
-                    outline:
-                        geometryType === "polygon"
-                            ? { color: [r, g, b, 1], width: 2 }
-                            : null,
-                    size: geometryType === "point" ? "8px" : null,
-                    width: geometryType === "polyline" ? 2 : null,
-                },
-            };
-
-            const popupTemplate = {
-                title: "Atributos",
-                content: [
-                    {
-                        type: "fields",
-                        fieldInfos: dynamicFields.map((f) => ({
-                            fieldName: f.name,
-                            label: f.alias,
-                        })),
+            // Crear FeatureLayer vacío
+            const featureLayer = new FeatureLayer({
+                source: [], // empieza vacío
+                objectIdField: "OBJECTID",
+                geometryType,
+                spatialReference: { wkid: 4326 },
+                fields: [...dynamicFields],
+                renderer: {
+                    type: "simple",
+                    symbol: {
+                        type:
+                            geometryType === "point"
+                                ? "simple-marker"
+                                : geometryType === "polyline"
+                                    ? "simple-line"
+                                    : "simple-fill",
+                        color: geometryType === "point" ? [r, g, b] : fillColor,
+                        outline:
+                            geometryType === "polygon"
+                                ? { color: outlineColor, width: 2 }
+                                : null,
+                        size: geometryType === "point" ? "8px" : null,
+                        width: geometryType === "polyline" ? 2 : null,
                     },
-                ],
-            };
-
-            // 4. Crear GeoJSONLayer a partir de un Blob URL
-            const blob = new Blob([JSON.stringify(geojson)], {
-                type: "application/json",
+                },
+                popupTemplate: {
+                    title: "Atributos",
+                    content: [
+                        {
+                            type: "fields",
+                            fieldInfos: dynamicFields.map((f) => ({
+                                fieldName: f.name,
+                                label: f.alias,
+                            })),
+                        },
+                    ],
+                },
             });
-            const url = URL.createObjectURL(blob);
 
-            const geojsonLayer = new GeoJSONLayer({
-                url,
-                renderer,
-                popupTemplate,
-                copyright: nameWithoutExt,
-            });
-            view.map.add(geojsonLayer);
+            view.map.add(featureLayer);
+            await featureLayer.when();
 
-            // 5. Al cargar, centrar y actualizar estado
-            await geojsonLayer.when();
+            // Procesar por lotes y agregar progresivamente
+            const batchSize = 1000;
+            const allFeatures = geojson.features;
+            const total = allFeatures.length;
+            let objectIdCounter = 0;
 
-            const extentResult = await geojsonLayer.queryExtent();
-            if (extentResult.extent) {
-                await view.goTo({ target: extentResult.extent, padding: 50 });
+            for (let i = 0; i < total; i += batchSize) {
+                const batch = allFeatures.slice(i, i + batchSize)
+                    .map((f) => {
+                        const geometry = convertGeometry(f.geometry);
+                        if (!geometry) return null;
+
+                        const propsRaw = f.properties || {};
+                        const propsClean = {};
+                        Object.entries(propsRaw).forEach(([key, value]) => {
+                            if (value instanceof Date) {
+                                const yr = value.getFullYear();
+                                propsClean[key] = yr < 1900 ? null : value;
+                            } else {
+                                propsClean[key] = value;
+                            }
+                        });
+
+                        return {
+                            geometry,
+                            attributes: { OBJECTID: objectIdCounter++, ...propsClean },
+                        };
+                    })
+                    .filter(Boolean);
+
+                if (batch.length > 0) {
+                    await featureLayer.applyEdits({ addFeatures: batch });
+                }
+
+                // Pausa para no bloquear
+                await new Promise((resolve) => setTimeout(resolve, 10));
             }
 
-            const layerView = await view.whenLayerView(geojsonLayer);
-            setLayers((prev) => [
-                ...prev,
-                {
-                    id: newId,
-                    name: nameWithoutExt,
-                    layer: geojsonLayer,
-                    layerView,
-                    visible: true,
-                    highlightHandle: null,
-                    selectedIds: [],
-                    extent: extentResult.extent,
-                    color: [r, g, b],
-                },
-            ]);
+            const extentResult = await featureLayer.queryExtent();
+            if (extentResult?.extent) {
+                await view.goTo({ target: extentResult.extent, padding: 50 });
+            }
+            const layerView = await view.whenLayerView(featureLayer);
+
+            const newEntry = {
+                id: newId,
+                name: nameWithoutExt || `Layer ${newId}`,
+                layer: featureLayer,
+                layerView,
+                visible: true,
+                highlightHandle: null,
+                selectedIds: [],
+                extent: extentResult?.extent || null,
+                color: [r, g, b],
+            };
+            setLayers((prev) => [...prev, newEntry]);
+
         } catch (err) {
-            console.error("Error processing shapefile:", file.name, err);
+            console.error("Error procesando shapefile:", file.name, err);
             window.alert("Error al procesar shapefile: " + err.message);
         }
     };
@@ -747,26 +786,14 @@ const AppContainer = () => {
 
             {/* Menu */}
             <TopMenu
-                style={{ top: `${topOffset / 2}px` }}
                 menuOpen={menuOpen}
-                toggleMenu={toggleMenu}
-                closeMenu={() => setMenuOpen(false)}
-                onOpenFiles={() => { fileInputRef.current.click(); setMenuOpen(false); }}
-                onExportSHP={() => { handleExportRequest(); setMenuOpen(false); }}
+                toggleMenu={setMenuOpen}
+                onOpenFiles={handleOpenFiles}
+                onExportSHP={handleExportRequest}
                 onClearMap={handleClearMap}
                 onCloseApp={handleCloseApp}
-            />
 
-            {loading && <LoadingOverlay />}
-
-            <MapViewWrapper
-                layersRef={layersRef}
-                setSelectedCount={setSelectedCount}
-                onViewReady={(v) => (viewRef.current = v)}
-                initialViewRefs={{ centerRef: initialCenterRef, zoomRef: initialZoomRef, extentRef: initialExtentRef }}
-            />
-
-            <LayerPanel
+                // layer panel props:
                 layers={layers}
                 onToggleVisibility={toggleLayerVisibility}
                 onCenterView={handleCenterView}
@@ -801,6 +828,15 @@ const AppContainer = () => {
                         setSelectedCount(totalSelected);
                     }
                 }}
+            />
+
+            {loading && <LoadingOverlay />}
+
+            <MapViewWrapper
+                layersRef={layersRef}
+                setSelectedCount={setSelectedCount}
+                onViewReady={(v) => (viewRef.current = v)}
+                initialViewRefs={{ centerRef: initialCenterRef, zoomRef: initialZoomRef, extentRef: initialExtentRef }}
             />
 
             <SelectedCountBanner
