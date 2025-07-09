@@ -1,6 +1,6 @@
 import React from "react";
 
-const LoadingOverlay = ({ progress, progressCurrent, progressTotal }) => {
+const LoadingOverlay = ({ progress, progressCurrent, progressTotal, layerIndex, layerTotal }) => {
   return (
     <div
       style={{
@@ -25,7 +25,10 @@ const LoadingOverlay = ({ progress, progressCurrent, progressTotal }) => {
           color: "#333",
         }}
       >
-        Cargando capas... {progress !== undefined ? `${progress.toFixed(1)}%` : ""}
+        {typeof layerIndex === "number" && typeof layerTotal === "number"
+          ? `Cargando capas ${layerIndex}/${layerTotal}`
+          : "Cargando capas"}
+        {progress !== undefined ? ` – ${progress.toFixed(1)}%` : ""}
       </div>
       <div
         style={{
