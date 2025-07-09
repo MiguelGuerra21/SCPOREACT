@@ -4,7 +4,7 @@ import { Capacitor } from "@capacitor/core";
 import { FaChevronRight, FaChevronLeft } from "react-icons/fa";
 
 const LayerPanel = ({
-  layers,
+  layers = [],
   onToggleVisibility,
   onCenterView,
   onRemoveLayer,

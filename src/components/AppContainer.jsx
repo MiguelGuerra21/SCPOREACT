@@ -19,6 +19,7 @@ import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 import GeoJSONLayer from "@arcgis/core/layers/GeoJSONLayer";
+import LayerPanel from "./LayerPanel";
 
 
 
@@ -28,11 +29,14 @@ const AppContainer = () => {
     const [topOffset, setTopOffset] = useState(0);
     const layersRef = useRef([]);                   // ref sincronizado a layers para acceso en closures
     const layerIdRef = useRef(0);                   // para asignar id incremental a cada capa
-    const [loading, setLoading] = useState(false);  // overlay de carga mientras se procesan archivos
     const [menuOpen, setMenuOpen] = useState(false);
     const [selectedCount, setSelectedCount] = useState(0);
     const [batchEditOpen, setBatchEditOpen] = useState(false);
-
+    const [loading, setLoading] = React.useState(false);
+    const [progress, setProgress] = useState(0);
+    const [progressCurrent, setProgressCurrent] = useState(0);
+    const [progressTotal, setProgressTotal] = useState(0);
+    
     // Ref al MapView (instancia de ArcGIS MapView)
     const viewRef = useRef(null);
 
@@ -345,150 +349,174 @@ const AppContainer = () => {
             return;
         }
 
-        try {
-            const arrayBuffer = await file.arrayBuffer();
-            const zip = await JSZip.loadAsync(arrayBuffer);
-            const fileNames = Object.keys(zip.files);
-            const hasPrj = fileNames.some((name) =>
-                name.toLowerCase().endsWith(".prj")
+    setLoading(true);
+    setProgress(0);
+    setProgressCurrent(0);
+    setProgressTotal(0);
+
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        const zip = await JSZip.loadAsync(arrayBuffer);
+        const fileNames = Object.keys(zip.files);
+        const hasPrj = fileNames.some((name) =>
+            name.toLowerCase().endsWith(".prj")
+        );
+        if (!hasPrj) {
+            window.alert(
+                "No se puede mostrar una capa no geolocalizada junto a las localizadas"
             );
-            if (!hasPrj) {
-                window.alert(
-                    "No se puede mostrar una capa no geolocalizada junto a las localizadas"
-                );
-                return;
-            }
-
-            const geojson = await shpjs(arrayBuffer);
-            if (!geojson || !geojson.features?.length) {
-                console.warn("No valid features found in shapefile:", file.name);
-                return;
-            }
-
-            const [r, g, b] = generateColorForIndex(newId);
-            const fillColor = [r, g, b, 0.3];
-            const outlineColor = [r, g, b, 1];
-
-            const geomType0 = geojson.features[0]?.geometry?.type;
-            let geometryType = "polygon";
-            if (geomType0 === "Point") geometryType = "point";
-            else if (geomType0 === "LineString" || geomType0 === "MultiLineString")
-                geometryType = "polyline";
-
-            const firstProps = geojson.features[0]?.properties || {};
-            const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
-                let type;
-                if (typeof value === "number") type = "double";
-                else if (typeof value === "boolean") type = "boolean";
-                else if (value instanceof Date) type = "date";
-                else type = "string";
-                return { name: key, alias: key, type };
-            });
-
-            // Crear FeatureLayer vacío
-            const featureLayer = new FeatureLayer({
-                source: [], // empieza vacío
-                objectIdField: "OBJECTID",
-                geometryType,
-                spatialReference: { wkid: 4326 },
-                fields: [...dynamicFields],
-                renderer: {
-                    type: "simple",
-                    symbol: {
-                        type:
-                            geometryType === "point"
-                                ? "simple-marker"
-                                : geometryType === "polyline"
-                                    ? "simple-line"
-                                    : "simple-fill",
-                        color: geometryType === "point" ? [r, g, b] : fillColor,
-                        outline:
-                            geometryType === "polygon"
-                                ? { color: outlineColor, width: 2 }
-                                : null,
-                        size: geometryType === "point" ? "8px" : null,
-                        width: geometryType === "polyline" ? 2 : null,
-                    },
-                },
-                popupTemplate: {
-                    title: "Atributos",
-                    content: [
-                        {
-                            type: "fields",
-                            fieldInfos: dynamicFields.map((f) => ({
-                                fieldName: f.name,
-                                label: f.alias,
-                            })),
-                        },
-                    ],
-                },
-            });
-
-            view.map.add(featureLayer);
-            await featureLayer.when();
-
-            // Procesar por lotes y agregar progresivamente
-            const batchSize = 1000;
-            const allFeatures = geojson.features;
-            const total = allFeatures.length;
-            let objectIdCounter = 0;
-
-            for (let i = 0; i < total; i += batchSize) {
-                const batch = allFeatures.slice(i, i + batchSize)
-                    .map((f) => {
-                        const geometry = convertGeometry(f.geometry);
-                        if (!geometry) return null;
-
-                        const propsRaw = f.properties || {};
-                        const propsClean = {};
-                        Object.entries(propsRaw).forEach(([key, value]) => {
-                            if (value instanceof Date) {
-                                const yr = value.getFullYear();
-                                propsClean[key] = yr < 1900 ? null : value;
-                            } else {
-                                propsClean[key] = value;
-                            }
-                        });
-
-                        return {
-                            geometry,
-                            attributes: { OBJECTID: objectIdCounter++, ...propsClean },
-                        };
-                    })
-                    .filter(Boolean);
-
-                if (batch.length > 0) {
-                    await featureLayer.applyEdits({ addFeatures: batch });
-                }
-
-                // Pausa para no bloquear
-                await new Promise((resolve) => setTimeout(resolve, 10));
-            }
-
-            const extentResult = await featureLayer.queryExtent();
-            if (extentResult?.extent) {
-                await view.goTo({ target: extentResult.extent, padding: 50 });
-            }
-            const layerView = await view.whenLayerView(featureLayer);
-
-            const newEntry = {
-                id: newId,
-                name: nameWithoutExt || `Layer ${newId}`,
-                layer: featureLayer,
-                layerView,
-                visible: true,
-                highlightHandle: null,
-                selectedIds: [],
-                extent: extentResult?.extent || null,
-                color: [r, g, b],
-            };
-            setLayers((prev) => [...prev, newEntry]);
-
-        } catch (err) {
-            console.error("Error procesando shapefile:", file.name, err);
-            window.alert("Error al procesar shapefile: " + err.message);
+            setLoading(false);
+            return;
         }
-    };
+
+        const geojson = await shpjs(arrayBuffer);
+        if (!geojson || !geojson.features?.length) {
+            console.warn("No valid features found in shapefile:", file.name);
+            setLoading(false);
+            return;
+        }
+
+        const [r, g, b] = generateColorForIndex(newId);
+        const fillColor = [r, g, b, 0.3];
+        const outlineColor = [r, g, b, 1];
+
+        const geomType0 = geojson.features[0]?.geometry?.type;
+        let geometryType = "polygon";
+        if (geomType0 === "Point") geometryType = "point";
+        else if (geomType0 === "LineString" || geomType0 === "MultiLineString")
+            geometryType = "polyline";
+
+        const firstProps = geojson.features[0]?.properties || {};
+        const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
+            let type;
+            if (typeof value === "number") type = "double";
+            else if (typeof value === "boolean") type = "boolean";
+            else if (value instanceof Date) type = "date";
+            else type = "string";
+            return { name: key, alias: key, type };
+        });
+
+        // Crear FeatureLayer vacío
+        const featureLayer = new FeatureLayer({
+            source: [],
+            objectIdField: "OBJECTID",
+            geometryType,
+            spatialReference: { wkid: 4326 },
+            fields: [...dynamicFields],
+            renderer: {
+                type: "simple",
+                symbol: {
+                    type:
+                        geometryType === "point"
+                            ? "simple-marker"
+                            : geometryType === "polyline"
+                            ? "simple-line"
+                            : "simple-fill",
+                    color: geometryType === "point" ? [r, g, b] : fillColor,
+                    outline:
+                        geometryType === "polygon"
+                            ? { color: outlineColor, width: 2 }
+                            : null,
+                    size: geometryType === "point" ? "8px" : null,
+                    width: geometryType === "polyline" ? 2 : null,
+                },
+            },
+            popupTemplate: {
+                title: `${nameWithoutExt} - ID:` + "{fid}",
+                content: [
+                    {
+                        type: "fields",
+                        fieldInfos: dynamicFields.map((f) => ({
+                            fieldName: f.name,
+                            label: f.alias,
+                        })),
+                    },
+                ],
+            },
+        });
+
+        view.map.add(featureLayer);
+        await featureLayer.when();
+
+        const batchSize = 1000;
+        const allFeatures = geojson.features;
+        const total = allFeatures.length;
+
+        setProgress(0);
+        setProgressCurrent(0);
+        setProgressTotal(total);
+
+        let objectIdCounter = 0;
+
+        for (let i = 0; i < total; i += batchSize) {
+            const batch = allFeatures.slice(i, i + batchSize)
+                .map((f) => {
+                    const geometry = convertGeometry(f.geometry);
+                    if (!geometry) return null;
+
+                    const propsRaw = f.properties || {};
+                    const propsClean = {};
+                    Object.entries(propsRaw).forEach(([key, value]) => {
+                        if (value instanceof Date) {
+                            const yr = value.getFullYear();
+                            propsClean[key] = yr < 1900 ? null : value;
+                        } else {
+                            propsClean[key] = value;
+                        }
+                    });
+
+                    return {
+                        geometry,
+                        attributes: { OBJECTID: objectIdCounter++, ...propsClean },
+                    };
+                })
+                .filter(Boolean);
+
+            if (batch.length > 0) {
+                await featureLayer.applyEdits({ addFeatures: batch });
+            }
+
+            // Actualizar progreso
+            setProgressCurrent((prev) => {
+                const current = Math.min(prev + batch.length, total);
+                setProgress((current / total) * 100);
+                return current;
+            });
+
+            // Pequeña pausa para no bloquear UI
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+
+        const extentResult = await featureLayer.queryExtent();
+        if (extentResult?.extent) {
+            await view.goTo({ target: extentResult.extent, padding: 50 });
+        }
+        const layerView = await view.whenLayerView(featureLayer);
+
+        const newEntry = {
+            id: newId,
+            name: nameWithoutExt || `Layer ${newId}`,
+            layer: featureLayer,
+            layerView,
+            visible: true,
+            highlightHandle: null,
+            selectedIds: [],
+            extent: extentResult?.extent || null,
+            color: [r, g, b],
+        };
+        setLayers((prev) => [...prev, newEntry]);
+
+    } catch (err) {
+        console.error("Error procesando shapefile:", file.name, err);
+        window.alert("Error al procesar shapefile: " + err.message);
+    } finally {
+        setLoading(false);
+        setProgress(0);
+        setProgressCurrent(0);
+        setProgressTotal(0);
+    }
+};
+
 
 
 
@@ -792,43 +820,15 @@ const AppContainer = () => {
                 onExportSHP={handleExportRequest}
                 onClearMap={handleClearMap}
                 onCloseApp={handleCloseApp}
-
-                // layer panel props:
-                layers={layers}
-                onToggleVisibility={toggleLayerVisibility}
-                onCenterView={handleCenterView}
-                onRemoveLayer={(layerId) => {
-                    // 1) Confirm
-                    if (!window.confirm("¿Seguro que quieres eliminar esta capa?")) return;
-
-                    // 2) Remove from ArcGIS map
-                    const view = viewRef.current;
-                    const entry = layersRef.current.find((l) => l.id === layerId);
-                    if (view && entry) {
-                        view.map.layers.remove(entry.layer);
-                        entry.highlightHandle?.remove();
-                    }
-
-                    // 3) Compute new list
-                    const newLayers = layersRef.current.filter((l) => l.id !== layerId);
-
-                    if (newLayers.length === 0) {
-                        // If no layers left, clear everything (reset view, state, etc.)
-                        handleClearMap();
-                    } else {
-                        // Otherwise just update state
-                        setLayers(newLayers);
-                        layersRef.current = newLayers;
-
-                        // 4) Recompute selected count
-                        const totalSelected = newLayers.reduce(
-                            (sum, l) => sum + (l.selectedIds?.length || 0),
-                            0
-                        );
-                        setSelectedCount(totalSelected);
-                    }
-                }}
             />
+
+            {loading && (
+                <LoadingOverlay
+                    progress={progress}
+                    progressCurrent={progressCurrent}
+                    progressTotal={progressTotal}
+                />
+            )}
 
             {loading && <LoadingOverlay />}
 
