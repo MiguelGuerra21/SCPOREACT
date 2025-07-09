@@ -28,10 +28,13 @@ const AppContainer = () => {
     const [topOffset, setTopOffset] = useState(0);
     const layersRef = useRef([]);                   // ref sincronizado a layers para acceso en closures
     const layerIdRef = useRef(0);                   // para asignar id incremental a cada capa
-    const [loading, setLoading] = useState(false);  // overlay de carga mientras se procesan archivos
     const [menuOpen, setMenuOpen] = useState(false);
     const [selectedCount, setSelectedCount] = useState(0);
     const [batchEditOpen, setBatchEditOpen] = useState(false);
+    const [loading, setLoading] = React.useState(false);
+    const [progress, setProgress] = useState(0);
+    const [progressCurrent, setProgressCurrent] = useState(0);
+    const [progressTotal, setProgressTotal] = useState(0);
     
     // Ref al MapView (instancia de ArcGIS MapView)
     const viewRef = useRef(null);
@@ -345,6 +348,11 @@ const handleFileOpen = async (file) => {
         return;
     }
 
+    setLoading(true);
+    setProgress(0);
+    setProgressCurrent(0);
+    setProgressTotal(0);
+
     try {
         const arrayBuffer = await file.arrayBuffer();
         const zip = await JSZip.loadAsync(arrayBuffer);
@@ -356,12 +364,14 @@ const handleFileOpen = async (file) => {
             window.alert(
                 "No se puede mostrar una capa no geolocalizada junto a las localizadas"
             );
+            setLoading(false);
             return;
         }
 
         const geojson = await shpjs(arrayBuffer);
         if (!geojson || !geojson.features?.length) {
             console.warn("No valid features found in shapefile:", file.name);
+            setLoading(false);
             return;
         }
 
@@ -387,7 +397,7 @@ const handleFileOpen = async (file) => {
 
         // Crear FeatureLayer vacío
         const featureLayer = new FeatureLayer({
-            source: [], // empieza vacío
+            source: [],
             objectIdField: "OBJECTID",
             geometryType,
             spatialReference: { wkid: 4326 },
@@ -427,10 +437,14 @@ const handleFileOpen = async (file) => {
         view.map.add(featureLayer);
         await featureLayer.when();
 
-        // Procesar por lotes y agregar progresivamente
         const batchSize = 1000;
         const allFeatures = geojson.features;
         const total = allFeatures.length;
+
+        setProgress(0);
+        setProgressCurrent(0);
+        setProgressTotal(total);
+
         let objectIdCounter = 0;
 
         for (let i = 0; i < total; i += batchSize) {
@@ -461,7 +475,14 @@ const handleFileOpen = async (file) => {
                 await featureLayer.applyEdits({ addFeatures: batch });
             }
 
-            // Pausa para no bloquear
+            // Actualizar progreso
+            setProgressCurrent((prev) => {
+                const current = Math.min(prev + batch.length, total);
+                setProgress((current / total) * 100);
+                return current;
+            });
+
+            // Pequeña pausa para no bloquear UI
             await new Promise((resolve) => setTimeout(resolve, 10));
         }
 
@@ -487,8 +508,14 @@ const handleFileOpen = async (file) => {
     } catch (err) {
         console.error("Error procesando shapefile:", file.name, err);
         window.alert("Error al procesar shapefile: " + err.message);
+    } finally {
+        setLoading(false);
+        setProgress(0);
+        setProgressCurrent(0);
+        setProgressTotal(0);
     }
 };
+
 
 
 
@@ -793,7 +820,13 @@ const handleFileOpen = async (file) => {
                 onCloseApp={handleCloseApp}
             />
 
-            {loading && <LoadingOverlay />}
+            {loading && (
+                <LoadingOverlay
+                    progress={progress}
+                    progressCurrent={progressCurrent}
+                    progressTotal={progressTotal}
+                />
+            )}
 
             <MapViewWrapper
                 layersRef={layersRef}
