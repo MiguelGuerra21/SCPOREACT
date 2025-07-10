@@ -423,7 +423,7 @@ const handleFileOpen = async (file) => {
                 },
             },
             popupTemplate: {
-                title: "Atributos",
+                title: `${nameWithoutExt} - ID:` + "{fid}", 
                 content: [
                     {
                         type: "fields",
