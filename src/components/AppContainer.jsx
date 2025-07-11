@@ -19,6 +19,7 @@ import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 import { StatusBar } from "@capacitor/status-bar";
+import ExportWorker from "../workers/exportShapefile.worker.js";
 
 
 
@@ -552,116 +553,125 @@ const handleFileOpen = async (file) => {
         }
     };
     
-    const exportLayerAsShapefile = async (entry) => {
-        const { layer, name } = entry;
-        if (!layer) {
-            alert("No hay capa para exportar.");
-            return;
-        }
-        const query = layer.createQuery();
-        query.where = "1=1";
-        query.returnGeometry = true;
-        query.outFields = ["*"];
-        const result = await layer.queryFeatures(query);
+const exportLayerAsShapefile = async (entry) => {
+  const { layer, name } = entry;
+  if (!layer) {
+    alert("No hay capa para exportar.");
+    return;
+  }
 
-        const geojson = {
-            type: "FeatureCollection",
-            features: result.features
-                .map((f) => {
-                    let geom = f.geometry;
-                    if (geom.spatialReference?.isWebMercator) {
-                        geom = webMercatorToGeographic(geom);
-                    }
+  try {
+    // 1. Consultar features
+    const query = layer.createQuery();
+    query.where = "1=1";
+    query.returnGeometry = true;
+    query.outFields = ["*"];
+    const result = await layer.queryFeatures(query);
+    console.log("Features consultadas:", result.features.length);
 
-                    let coords;
-                    switch (geom.type) {
-                        case "point":
-                            coords = [geom.x, geom.y];
-                            break;
-                        case "polyline":
-                            coords = geom.paths.length === 1 ? geom.paths[0] : geom.paths;
-                            break;
-                        case "polygon":
-                            coords = geom.rings;
-                            break;
-                        default:
-                            return null;
-                    }
+    // 2. Construir GeoJSON (mantener tu lógica actual)
+    const geojson = {
+      type: "FeatureCollection",
+      features: result.features
+        .map((f) => {
+          let geom = f.geometry;
+          if (geom.spatialReference?.isWebMercator) {
+            geom = webMercatorToGeographic(geom);
+          }
 
-                    return {
-                        type: "Feature",
-                        geometry: Array.isArray(coords[0][0])
-                            ? { type: "Polygon", coordinates: coords }
-                            : { type: "LineString", coordinates: coords },
-                        properties: f.attributes,
-                    };
-                })
-                .filter(Boolean),
-        };
+          let geometry = null;
+          switch(geom.type) {
+            case "point":
+              geometry = { type: "Point", coordinates: [geom.x, geom.y] };
+              break;
+            case "polyline":
+              geometry = geom.paths.length > 1
+                ? { type: "MultiLineString", coordinates: geom.paths }
+                : { type: "LineString", coordinates: geom.paths[0] };
+              break;
+            case "polygon":
+              geometry = { type: "Polygon", coordinates: geom.rings };
+              break;
+            default:
+              return null;
+          }
 
-        if (!geojson.features.length) {
-            alert("No hay entidades válidas para exportar.");
-            return;
-        }
-
-        await loadShpWriteFromCDN();
-        const zipBlob = await window.shpwrite.zip(geojson, { outputType: "blob" });
-        if (!zipBlob || zipBlob.size < 100) {
-            alert("Archivo generado inválido.");
-            return;
-        }
-
-        const fileName = `${name}.zip`;
-
-        if (isAndroid) {
-            try {
-                // 1) Accede al plugin desde el namespace global de Cordova
-                var saf = window.cordova && window.cordova.plugins && window.cordova.plugins.safMediastore;
-                if (!saf) {
-                    alert('El plugin SAF‑MediaStore no está disponible.');
-                    return;
-                }
-
-                // 2) Convierte el Blob a base64
-                blobToBase64(zipBlob).then(function (base64) {
-                    // 3) Escribe el archivo en la carpeta Downloads
-                    saf.writeFile({
-                        data: base64,
-                        filename: fileName
-                        // opcional: folder y subFolder si quieres subcarpetas
-                        // folder: 'MiApp',
-                        // subFolder: 'Zips'
-                    }).then(function (uri) {
-                        console.log('Guardado en URI:', uri);
-                        alert('Shapefile guardado correctamente en Descargas.');
-                    }).catch(function (err) {
-                        console.error('Error al escribir con SAF‑MediaStore:', err);
-                        alert('Error al guardar con SAF‑MediaStore: ' + err.message);
-                    });
-                }).catch(function (err) {
-                    console.error('Error convirtiendo Blob a Base64:', err);
-                    alert('Error preparando datos para guardado: ' + err.message);
-                });
-
-            } catch (err) {
-                console.error('Error inesperado:', err);
-                alert('Error al guardar con SAF‑MediaStore: ' + err.message);
-            }
-        } else {
-            // Fallback para web / escritorio
-            saveAs(zipBlob, fileName);
-        }
+          return {
+            type: "Feature",
+            geometry,
+            properties: f.attributes,
+          };
+        })
+        .filter(Boolean),
     };
 
-
-    function blobToBase64(blob) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result.split(',')[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
+    if (!geojson.features.length) {
+      alert("No hay entidades válidas para exportar.");
+      return;
     }
+
+    console.log("Iniciando generación de shapefile...");
+    const worker = new ExportWorker();
+    
+    const zipBlob = await new Promise((resolve, reject) => {
+      worker.onmessage = (e) => {
+        const { type, blob, message } = e.data;
+        
+        if (type === "done" && blob) {
+          console.log("ZIP recibido del worker, tamaño:", blob.size);
+          if (blob.size < 100) {
+            reject(new Error("Archivo generado demasiado pequeño"));
+          } else {
+            resolve(blob);
+          }
+        } else {
+          reject(new Error(message || "Error en el worker"));
+        }
+        worker.terminate();
+      };
+
+      worker.onerror = (err) => {
+        console.error("Error en worker:", err);
+        reject(err);
+        worker.terminate();
+      };
+
+      worker.postMessage({ geojson });
+    });
+
+    // 3. Guardar el archivo
+    const fileName = `${name.replace(/[^a-z0-9]/gi, '_')}.zip`;
+    
+    if (window.cordova?.plugins?.safMediastore) {
+      // Android
+      const base64 = await blobToBase64(zipBlob);
+      await window.cordova.plugins.safMediastore.writeFile({
+        data: base64,
+        filename: fileName,
+        mimeType: "application/zip"
+      });
+      alert("Shapefile guardado correctamente");
+    } else {
+      // Navegador
+      saveAs(zipBlob, fileName);
+    }
+
+  } catch (err) {
+    console.error("Error en exportLayerAsShapefile:", err);
+    alert(`Error al exportar: ${err.message}`);
+  }
+};
+
+// Función auxiliar para Blob a Base64
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 
 
 
@@ -786,15 +796,21 @@ const handleFileOpen = async (file) => {
         }
         setExportModalOpen(true);
     };
-    const handleExportConfirm = (idx) => {
-        const entry = layers[idx];
-        exportLayerAsShapefile(entry);
-        setExportModalOpen(false);
-    };
-    const handleExportCancel = () => {
-        setExportModalOpen(false);
-    };
-
+const handleExportConfirm = async (idx) => {
+  console.log("Exportar clickeado para capa idx:", idx, layers[idx]);
+  try {
+    const entry = layers[idx];
+    await exportLayerAsShapefile(entry);
+    console.log("Exportación completada");
+  } catch (error) {
+    console.error("Error en exportLayerAsShapefile:", error);
+    alert("Error al exportar: " + error.message);
+  }
+  setExportModalOpen(false);
+};
+const handleExportCancel = () => {
+  setExportModalOpen(false);
+};
     // ----- JSX de render -----
     return (
         <div>
@@ -905,11 +921,8 @@ const handleFileOpen = async (file) => {
             {exportModalOpen && (
                 <ExportModal
                     layers={layers}
-                    onCancel={() => setExportModalOpen(false)}
-                    onConfirm={(idx) => {
-                        exportLayerAsShapefile(layers[idx]);
-                        setExportModalOpen(false);
-                    }}
+                    onCancel={handleExportCancel}
+                    onConfirm={handleExportConfirm}
                 />
             )}
         </div>
