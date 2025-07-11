@@ -37,6 +37,8 @@ const AppContainer = () => {
     const [progress, setProgress] = useState(0);
     const [progressCurrent, setProgressCurrent] = useState(0);
     const [progressTotal, setProgressTotal] = useState(0);
+    const [layerIndex, setLayerIndex] = useState(0);
+    const [layerTotal, setLayerTotal] = useState(0);
 
     // Ref al MapView (instancia de ArcGIS MapView)
     const viewRef = useRef(null);
@@ -820,8 +822,16 @@ const handleExportCancel = () => {
                 multiple
                 onFilesSelected={async (files) => {
                     setLoading(true);
-                    for (let f of files) await handleFileOpen(f);
+                    setLayerTotal(files.length);
+
+                    for (let i = 0; i < files.length; i++) {
+                        setLayerIndex(i + 1);
+                        await handleFileOpen(files[i]);
+                    }
+
                     setLoading(false);
+                    setLayerIndex(0);
+                    setLayerTotal(0);
                 }}
             />
 
@@ -867,6 +877,8 @@ const handleExportCancel = () => {
                     progress={progress}
                     progressCurrent={progressCurrent}
                     progressTotal={progressTotal}
+                    layerIndex={layerIndex}
+                    layerTotal={layerTotal}
                 />
             )}
             <MapViewWrapper
