@@ -39,6 +39,7 @@ const AppContainer = () => {
     const [progressTotal, setProgressTotal] = useState(0);
     const [layerIndex, setLayerIndex] = useState(0);
     const [layerTotal, setLayerTotal] = useState(0);
+    const [loadingMessage, setLoadingMessage] = useState("");
 
     // Ref al MapView (instancia de ArcGIS MapView)
     const viewRef = useRef(null);
@@ -358,8 +359,10 @@ const AppContainer = () => {
         setProgressTotal(0);
 
         try {
+            setLoadingMessage("Descomprimiendo archivo ZIP ");
             const arrayBuffer = await file.arrayBuffer();
             const zip = await JSZip.loadAsync(arrayBuffer);
+            setLoadingMessage("Leyendo archivos ");
             const fileNames = Object.keys(zip.files);
             const hasPrj = fileNames.some((name) =>
                 name.toLowerCase().endsWith(".prj")
@@ -371,7 +374,7 @@ const AppContainer = () => {
                 setLoading(false);
                 return;
             }
-
+            setLoadingMessage("Parseando shapefile y construyendo features ");
             const geojson = await shpjs(arrayBuffer);
             if (!geojson || !geojson.features?.length) {
                 console.warn("No valid features found in shapefile:", file.name);
@@ -437,7 +440,7 @@ const AppContainer = () => {
                     ],
                 },
             });
-
+            setLoadingMessage("Agregando features al mapa ");
             view.map.add(featureLayer);
             await featureLayer.when();
 
@@ -517,6 +520,7 @@ const AppContainer = () => {
             setProgress(0);
             setProgressCurrent(0);
             setProgressTotal(0);
+            setLoadingMessage("");
         }
     };
 
@@ -562,6 +566,9 @@ const exportLayerAsShapefile = async (entry) => {
   }
 
   try {
+    setLoadingMessage("Consultando entidades...");
+    setProgress(0);
+
     // 1. Consultar features
     const query = layer.createQuery();
     query.where = "1=1";
@@ -570,7 +577,8 @@ const exportLayerAsShapefile = async (entry) => {
     const result = await layer.queryFeatures(query);
     console.log("Features consultadas:", result.features.length);
 
-    // 2. Construir GeoJSON (mantener tu lógica actual)
+    // 2. Construir GeoJSON
+    setLoadingMessage("Construyendo GeoJSON...");
     const geojson = {
       type: "FeatureCollection",
       features: result.features
@@ -612,8 +620,9 @@ const exportLayerAsShapefile = async (entry) => {
     }
 
     console.log("Iniciando generación de shapefile...");
+    // 3. Generar ZIP
+    setLoadingMessage("Generando archivo ZIP...");
     const worker = new ExportWorker();
-    
     const zipBlob = await new Promise((resolve, reject) => {
       worker.onmessage = (e) => {
         const { type, blob, message } = e.data;
@@ -640,12 +649,21 @@ const exportLayerAsShapefile = async (entry) => {
       worker.postMessage({ geojson });
     });
 
-    // 3. Guardar el archivo
+    // 4. Guardar el archivo
     const fileName = `${name.replace(/[^a-z0-9]/gi, '_')}.zip`;
     
     if (window.cordova?.plugins?.safMediastore) {
       // Android
-      const base64 = await blobToBase64(zipBlob);
+      setLoadingMessage("Convirtiendo a base64...");
+      setProgress(0);
+      setProgressCurrent(0);
+      setProgressTotal(zipBlob.size);
+      const base64 = await blobToBase64(zipBlob, (percent, loaded, total) => {
+        setProgress(percent);
+        setProgressCurrent(loaded);
+        setProgressTotal(total);
+      });
+      setLoadingMessage("Guardando archivo...");
       await window.cordova.plugins.safMediastore.writeFile({
         data: base64,
         filename: fileName,
@@ -653,22 +671,47 @@ const exportLayerAsShapefile = async (entry) => {
       });
       alert("Shapefile guardado correctamente");
     } else {
-      // Navegador
+      // Navegador: simula progreso de guardado
+      setLoadingMessage("Guardando archivo...");
+      for (let i = 1; i <= 100; i += 10) {
+        setProgress(i);
+        setProgressCurrent(i);
+        setProgressTotal(100);
+        await new Promise((r) => setTimeout(r, 10));
+      }
       saveAs(zipBlob, fileName);
+      setProgress(100);
+      setProgressCurrent(100);
+      setProgressTotal(100);
     }
 
   } catch (err) {
     console.error("Error en exportLayerAsShapefile:", err);
     alert(`Error al exportar: ${err.message}`);
   }
+  finally {
+    setTimeout(() => {
+      setLoading(false);
+      setLoadingMessage("");
+      setProgress(0);
+      setProgressCurrent(0);
+      setProgressTotal(0);
+    }, 500); //se fija en 500 para que de tiempo a ver el 100%
+    }
 };
 
 // Función auxiliar para Blob a Base64
-function blobToBase64(blob) {
+function blobToBase64(blob, onProgress) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result.split(",")[1]);
     reader.onerror = reject;
+    reader.onprogress = (evt) => {
+      if (evt.lengthComputable && typeof onProgress === "function") {
+        const percent = (evt.loaded / evt.total) * 100;
+        onProgress(percent, evt.loaded, evt.total);
+      }
+    };
     reader.readAsDataURL(blob);
   });
 }
@@ -798,19 +841,26 @@ function blobToBase64(blob) {
         setExportModalOpen(true);
     };
 const handleExportConfirm = async (idx) => {
-  console.log("Exportar clickeado para capa idx:", idx, layers[idx]);
-  try {
-    const entry = layers[idx];
-    await exportLayerAsShapefile(entry);
-    console.log("Exportación completada");
-  } catch (error) {
-    console.error("Error en exportLayerAsShapefile:", error);
-    alert("Error al exportar: " + error.message);
-  }
-  setExportModalOpen(false);
+    setExportModalOpen(false);
+    setLoading(true);
+    setLoadingMessage("Guardando archivo...");
+    console.log("Exportar clickeado para capa idx:", idx, layers[idx]);
+    try 
+    {
+        const entry = layers[idx];
+        await exportLayerAsShapefile(entry);
+        console.log("Exportación completada");
+    } 
+    catch (error)
+    {
+        console.error("Error en exportLayerAsShapefile:", error);
+        alert("Error al exportar: " + error.message);
+    }
+    setLoading(false);
+    setLoadingMessage(""); // Oculta el overlay al terminar
 };
 const handleExportCancel = () => {
-  setExportModalOpen(false);
+    setExportModalOpen(false);
 };
     // ----- JSX de render -----
     return (
@@ -879,6 +929,13 @@ const handleExportCancel = () => {
                     progressTotal={progressTotal}
                     layerIndex={layerIndex}
                     layerTotal={layerTotal}
+                    message={loadingMessage}
+                    mode={loadingMessage.includes("Guardando") ||
+                            loadingMessage.includes("Consultando") ||
+                            loadingMessage.includes("Construyendo") ||
+                            loadingMessage.includes("Exportando") ||
+                            loadingMessage.includes("Convirtiendo") ||
+                            loadingMessage.includes("Generando archivo ZIP") ? "export" : "load"}
                 />
             )}
             <MapViewWrapper

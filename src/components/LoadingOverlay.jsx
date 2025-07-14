@@ -1,6 +1,6 @@
 import React from "react";
 
-const LoadingOverlay = ({ progress, progressCurrent, progressTotal, layerIndex, layerTotal }) => {
+const LoadingOverlay = ({ progress, progressCurrent, progressTotal, layerIndex, layerTotal, message, mode = "load" }) => {
   return (
     <div
       style={{
@@ -25,11 +25,15 @@ const LoadingOverlay = ({ progress, progressCurrent, progressTotal, layerIndex, 
           color: "#333",
         }}
       >
-        {typeof layerIndex === "number" && typeof layerTotal === "number"
-          ? `Cargando capas ${layerIndex}/${layerTotal}`
-          : "Cargando capas"}
-        {progress !== undefined ? ` – ${progress.toFixed(1)}%` : ""}
-      </div>
+      {message}
+      {mode === "load" && progress !== undefined && progress > 0 ? ` – ${progress.toFixed(1)}%` : ""}
+        {mode === "load" && layerTotal > 0 && (
+          <div style={{ fontSize: "14px", color: "#444" }}>
+            {`Capa ${layerIndex} de ${layerTotal}`}
+          </div>
+        )}
+      
+    </div>
       <div
         style={{
           border: "4px solid #f3f3f3",
@@ -41,6 +45,7 @@ const LoadingOverlay = ({ progress, progressCurrent, progressTotal, layerIndex, 
           marginBottom: "10px",
         }}
       ></div>
+      {mode === "load" && (
       <div
         style={{
         width: "200px",
@@ -61,8 +66,9 @@ const LoadingOverlay = ({ progress, progressCurrent, progressTotal, layerIndex, 
       }}
       />
 </div>
+      )}
       {/* Texto con número de features */}
-      {typeof progressCurrent === "number" && typeof progressTotal === "number" && (
+      {mode === "load" && typeof progressCurrent === "number" && typeof progressTotal === "number" && (
         <div style={{ fontSize: "12px", color: "#555" }}>
           {progressCurrent.toLocaleString()} de {progressTotal.toLocaleString()} features cargados
         </div>
