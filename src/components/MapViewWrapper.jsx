@@ -15,20 +15,37 @@ const MapViewWrapper = ({
   const mapDiv = useRef(null);
   const dragHandleRef = useRef(null);
   const clickHandleRef = useRef(null);
-
+  
   // Estado para el modo multi-selección y su ref
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const multiSelectModeRef = useRef(multiSelectMode);
   multiSelectModeRef.current = multiSelectMode;
-
-  // Detectamos la plataforma (una sola vez)
+  const shiftPressedRef = useRef(false); //estado global de la tecla Shift
+ // Detectamos la plataforma (una sola vez)
   const platform = Capacitor.getPlatform();
+
+  useEffect(() => {
+    //listeners globales para Shift
+    const handleKeyDown = (e) => {
+      if (e.key === "Shift") shiftPressedRef.current = true;
+    };
+    const handleKeyUp = (e) => {
+      if (e.key === "Shift") shiftPressedRef.current = false;
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
   // 'web' | 'ios' | 'android' | 'electron' | 'pwa'
 
   useEffect(() => {
     if (!mapDiv.current) return;
 
-    // 1. Crear el Map y MapView una sola vez
+    // 1. Crear el Map y MapView una sola vez  
     const map = new Map({ basemap: "streets-vector" });
     const view = new MapView({
       container: mapDiv.current,
@@ -60,13 +77,23 @@ const MapViewWrapper = ({
       let boxGraphic = null;
 
       dragHandleRef.current = view.on("drag", async (event) => {
-        const wantsBox =
+        const wantsBox = 
           event.button === 0 &&
           (
-            (["web", "electron"].includes(platform) && event.native.shiftKey) ||
+            (["web", "electron"].includes(platform) && shiftPressedRef.current) ||
             (["android", "ios"].includes(platform) && multiSelectModeRef.current)
           );
-        if (!wantsBox) return;
+
+        if (!wantsBox) {
+          // Cancelar gráfico si se suelta shift antes del mouse
+          if (boxGraphic) {
+            view.graphics.remove(boxGraphic);
+            boxGraphic = null;
+            dragOrigin = null;
+          }
+          return;
+        }
+
         event.stopPropagation();
 
         if (event.action === "start") {
@@ -219,7 +246,7 @@ const MapViewWrapper = ({
           style={{
             position: "absolute",
             right: 20,
-            top: "220px", 
+            top: "220px",
             zIndex: 1002,
             padding: "10px 15px",
             borderRadius: "20px",
