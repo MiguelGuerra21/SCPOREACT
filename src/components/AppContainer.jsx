@@ -59,168 +59,130 @@ const AppContainer = () => {
         entry.layer.geometryType === 'polygon'
     );
 
-    // Dentro de AppContainer:
-    const handleBatchEditApply = async (layerIndex, fieldName, newValueRaw) => {
+    const handleBatchEditApply = async (
+        layerIndex,      // ahora es índice en el array `layers`
+        fieldName,       // e.g. "Fecha ET03"
+        newValueRaw      // la fecha seleccionada en formato "YYYY-MM-DD"
+    ) => {
+        // 1) Obtenemos la entrada por índice
         const entry = layers[layerIndex];
         if (!entry) {
             window.alert("Error interno: capa no encontrada.");
             return;
         }
-        const { layer, layerView, selectedIds } = entry;
-        if (!selectedIds || !selectedIds.length) {
+        const { layer, selectedIds } = entry;
+        if (!selectedIds?.length) {
             window.alert("No hay features seleccionadas en la capa.");
             setBatchEditOpen(false);
             return;
         }
-        // Obtener definición del campo
-        const fieldDef = layer.fields.find((f) => f.name === fieldName);
-        if (!fieldDef) {
-            window.alert("Campo no encontrado.");
+
+        // 2) Extraer el número de etapa
+        const etapaMatch = fieldName.match(/ET\s*0*?(\d+)$/i);
+        const selectedEtapaNum = etapaMatch ? parseInt(etapaMatch[1], 10) : null;
+        if (selectedEtapaNum == null) {
+            window.alert(`Nombre de campo inválido: ${fieldName}`);
             return;
         }
-        // Parsear newValueRaw según tipo
-        let parsedValue = null;
-        switch (fieldDef.type) {
-            case "integer":
-            case "small-integer":
-                parsedValue = parseInt(newValueRaw, 10);
-                if (isNaN(parsedValue)) {
-                    window.alert("Valor inválido para campo entero.");
-                    return;
-                }
-                break;
-            case "double":
-                parsedValue = parseFloat(newValueRaw);
-                if (isNaN(parsedValue)) {
-                    window.alert("Valor inválido para campo numérico.");
-                    return;
-                }
-                break;
-            case "date":
-                if (!newValueRaw) {
-                    parsedValue = null;
-                } else {
-                    // newValueRaw viene de <input type="date">: "YYYY-MM-DD"
-                    const d = new Date(newValueRaw);
-                    if (isNaN(d.getTime())) {
-                        window.alert("Fecha inválida.");
-                        return;
-                    }
-                    // ArcGIS JS API acepta Date
-                    parsedValue = d;
-                }
-                break;
-            case "boolean":
-                if (newValueRaw === "true") parsedValue = true;
-                else if (newValueRaw === "false") parsedValue = false;
-                else {
-                    window.alert("Selecciona true o false para campo booleano.");
-                    return;
-                }
-                break;
-            case "string":
-                parsedValue = newValueRaw;
-                break;
-            default:
-                parsedValue = newValueRaw;
+
+        // 3) Recopilar los campos "Fecha ETnn" hasta la etapa seleccionada
+        const fechaFieldsToUpdate = layer.fields
+            .filter(f => {
+                const m = f.name.match(/^Fecha\s*ET\s*0*?(\d+)$/i);
+                const num = m ? parseInt(m[1], 10) : NaN;
+                return !isNaN(num) && num <= selectedEtapaNum;
+            })
+            .map(f => ({ name: f.name, type: f.type }));
+
+        if (!fechaFieldsToUpdate.length) {
+            window.alert("No se encontraron campos Fecha ET anteriores.");
+            return;
         }
 
-        try {
-            // -------------------------------
-            // 1) Consulta previa con queryFeatures para ver valores antiguos
-            const query = layer.createQuery();
-            query.where = "1=1";
-            query.returnGeometry = false;
-            query.outFields = ["*"];
-            let resultsBefore;
-            try {
-                resultsBefore = await layer.queryFeatures(query);
-                console.log(
-                    "DEBUG antes de editar, atributos de todas las features:",
-                    resultsBefore.features.map((f) => ({
-                        OBJECTID: f.attributes.OBJECTID,
-                        valor: f.attributes[fieldName]
-                    }))
-                );
-            } catch (err) {
-                console.error("Error en queryFeatures antes de editar:", err);
-            }
-            // -------------------------------
-            // 2) Editar atributos en layer.source
-            const updates = selectedIds.map(oid => ({
-                attributes: {
-                    OBJECTID: oid,
-                    [fieldName]: parsedValue
-                }
-            }));
+        // 4) Validar la nueva fecha
+        if (!newValueRaw) {
+            window.alert("Selecciona una fecha válida.");
+            return;
+        }
+        const parsedDate = new Date(newValueRaw);
+        if (isNaN(parsedDate.getTime())) {
+            window.alert("Fecha inválida.");
+            return;
+        }
+        const epoch = parsedDate.getTime();
 
-            const editResult = await entry.layer.applyEdits({
-                updateFeatures: updates
+        try {
+            // 5) (Opcional) Consulta previa para debug
+            const where = selectedIds.map(id => `OBJECTID = ${id}`).join(" OR ");
+            const query = layer.createQuery();
+            query.where = where;
+            query.outFields = fechaFieldsToUpdate.map(f => f.name);
+            const before = await layer.queryFeatures(query);
+            console.log("ANTES de editar:", before.features.map(f => f.attributes));
+
+            // 6) Preparar los updates
+            const updates = selectedIds.map(oid => {
+                const attrs = { OBJECTID: oid };
+                for (const f of fechaFieldsToUpdate) {
+                    if (f.type === "date") {
+                        // Para campos de tipo date, usamos milisegundos
+                        attrs[f.name] = epoch;
+                    } else {
+                        // Para strings u otros, dejamos el valor crudo
+                        attrs[f.name] = newValueRaw;
+                    }
+                }
+                return { attributes: attrs };
             });
 
-            // ADD ERROR CHECKING HERE
-            if (editResult.updateFeaturesResults) {
-                editResult.updateFeaturesResults.forEach(result => {
-                    if (!result.success) {
-                        console.error("Failed to update feature:", result.error);
-                        // Optional: show specific error to user
-                    }
-                });
-            }
-            // -------------------------------
-            // 3) Consulta posterior con queryFeatures para verificar nuevos valores
-            let resultsAfter;
-            try {
-                // Reusar mismo query
-                resultsAfter = await layer.queryFeatures(query);
-                console.log(
-                    "DEBUG después de editar, atributos de todas las features:",
-                    resultsAfter.features.map((f) => ({
-                        OBJECTID: f.attributes.OBJECTID,
-                        valor: f.attributes[fieldName]
-                    }))
-                );
-            } catch (err) {
-                console.error("Error en queryFeatures después de editar:", err);
-            }
-            // -------------------------------
-            // 4) Forzar redraw del mapa
-            const view = viewRef.current;
-            if (view && typeof view.requestRender === "function") {
-                view.requestRender();
-            } else {
-                // fallback: alternar visibilidad
-                entry.layer.visible = false;
-                entry.layer.visible = true;
-            }
-            // -------------------------------
-            // 5) Si el popup está abierto sobre una feature editada, cerrarlo y reabrir para mostrar nuevo valor
-            if (view && view.popup.open) {
-                const sel = view.popup.selectedFeature;
-                if (sel) {
-                    const oidSel = sel.attributes?.OBJECTID;
-                    if (selectedIds.includes(oidSel)) {
-                        const loc = view.popup.location;
-                        view.popup.close();
-                        // Reabrir popup en la misma feature para que muestre atributos actualizados
-                        view.popup.open({
-                            features: [sel],
-                            location: loc
-                        });
-                    }
+            // 7) Ejecutar applyEdits
+            const result = await layer.applyEdits({ updateFeatures: updates });
+            if (result.updateFeaturesResults) {
+                const fails = result.updateFeaturesResults.filter(r => !r.success);
+                if (fails.length) {
+                    console.error("Errores al actualizar:", fails);
+                    window.alert("Algunas entidades no pudieron actualizarse.");
                 }
             }
-            // -------------------------------
+
+            // 8) Consulta posterior para debug
+            const after = await layer.queryFeatures(query);
+            console.log("DESPUÉS de editar:", after.features.map(f => f.attributes));
+
+            // 9) Forzar redraw / refrescar popup
+            const view = viewRef.current;
+            if (view?.requestRender) {
+                view.requestRender();
+            } else {
+                layer.visible = false;
+                layer.visible = true;
+            }
+            if (view?.popup.open) {
+                const selFeat = view.popup.selectedFeature;
+                if (selFeat && selectedIds.includes(selFeat.attributes.OBJECTID)) {
+                    const loc = view.popup.location;
+                    view.popup.close();
+                    view.popup.open({ features: [selFeat], location: loc });
+                }
+            }
+
+            // 10) Aviso al usuario
+            const campos = fechaFieldsToUpdate.map(f => f.name).join(", ");
             window.alert(
-                `Se actualizaron ${selectedIds.length} feature(s) en "${entry.name}".`
+                `Se actualizaron ${selectedIds.length} feature(s) en "${entry.name}"\n` +
+                `Campos modificados: ${campos}`
             );
         } catch (err) {
-            console.error("Error al editar atributos en lote:", err);
-            window.alert("Error al aplicar edición en lote: " + err.message);
+            console.error("Error en edición en lote:", err);
+            window.alert("Error al editar atributos en lote: " + err.message);
         } finally {
             setBatchEditOpen(false);
         }
     };
+
+
+
+
 
 
     // Sincronizar layersRef.current siempre que cambie layers
@@ -553,125 +515,125 @@ const AppContainer = () => {
                 return null;
         }
     };
-    
-const exportLayerAsShapefile = async (entry) => {
-  const { layer, name } = entry;
-  if (!layer) {
-    alert("No hay capa para exportar.");
-    return;
-  }
 
-  try {
-    // 1. Consultar features
-    const query = layer.createQuery();
-    query.where = "1=1";
-    query.returnGeometry = true;
-    query.outFields = ["*"];
-    const result = await layer.queryFeatures(query);
-    console.log("Features consultadas:", result.features.length);
+    const exportLayerAsShapefile = async (entry) => {
+        const { layer, name } = entry;
+        if (!layer) {
+            alert("No hay capa para exportar.");
+            return;
+        }
 
-    // 2. Construir GeoJSON (mantener tu lógica actual)
-    const geojson = {
-      type: "FeatureCollection",
-      features: result.features
-        .map((f) => {
-          let geom = f.geometry;
-          if (geom.spatialReference?.isWebMercator) {
-            geom = webMercatorToGeographic(geom);
-          }
+        try {
+            // 1. Consultar features
+            const query = layer.createQuery();
+            query.where = "1=1";
+            query.returnGeometry = true;
+            query.outFields = ["*"];
+            const result = await layer.queryFeatures(query);
+            console.log("Features consultadas:", result.features.length);
 
-          let geometry = null;
-          switch(geom.type) {
-            case "point":
-              geometry = { type: "Point", coordinates: [geom.x, geom.y] };
-              break;
-            case "polyline":
-              geometry = geom.paths.length > 1
-                ? { type: "MultiLineString", coordinates: geom.paths }
-                : { type: "LineString", coordinates: geom.paths[0] };
-              break;
-            case "polygon":
-              geometry = { type: "Polygon", coordinates: geom.rings };
-              break;
-            default:
-              return null;
-          }
+            // 2. Construir GeoJSON (mantener tu lógica actual)
+            const geojson = {
+                type: "FeatureCollection",
+                features: result.features
+                    .map((f) => {
+                        let geom = f.geometry;
+                        if (geom.spatialReference?.isWebMercator) {
+                            geom = webMercatorToGeographic(geom);
+                        }
 
-          return {
-            type: "Feature",
-            geometry,
-            properties: f.attributes,
-          };
-        })
-        .filter(Boolean),
+                        let geometry = null;
+                        switch (geom.type) {
+                            case "point":
+                                geometry = { type: "Point", coordinates: [geom.x, geom.y] };
+                                break;
+                            case "polyline":
+                                geometry = geom.paths.length > 1
+                                    ? { type: "MultiLineString", coordinates: geom.paths }
+                                    : { type: "LineString", coordinates: geom.paths[0] };
+                                break;
+                            case "polygon":
+                                geometry = { type: "Polygon", coordinates: geom.rings };
+                                break;
+                            default:
+                                return null;
+                        }
+
+                        return {
+                            type: "Feature",
+                            geometry,
+                            properties: f.attributes,
+                        };
+                    })
+                    .filter(Boolean),
+            };
+
+            if (!geojson.features.length) {
+                alert("No hay entidades válidas para exportar.");
+                return;
+            }
+
+            console.log("Iniciando generación de shapefile...");
+            const worker = new ExportWorker();
+
+            const zipBlob = await new Promise((resolve, reject) => {
+                worker.onmessage = (e) => {
+                    const { type, blob, message } = e.data;
+
+                    if (type === "done" && blob) {
+                        console.log("ZIP recibido del worker, tamaño:", blob.size);
+                        if (blob.size < 100) {
+                            reject(new Error("Archivo generado demasiado pequeño"));
+                        } else {
+                            resolve(blob);
+                        }
+                    } else {
+                        reject(new Error(message || "Error en el worker"));
+                    }
+                    worker.terminate();
+                };
+
+                worker.onerror = (err) => {
+                    console.error("Error en worker:", err);
+                    reject(err);
+                    worker.terminate();
+                };
+
+                worker.postMessage({ geojson });
+            });
+
+            // 3. Guardar el archivo
+            const fileName = `${name.replace(/[^a-z0-9]/gi, '_')}.zip`;
+
+            if (window.cordova?.plugins?.safMediastore) {
+                // Android
+                const base64 = await blobToBase64(zipBlob);
+                await window.cordova.plugins.safMediastore.writeFile({
+                    data: base64,
+                    filename: fileName,
+                    mimeType: "application/zip"
+                });
+                alert("Shapefile guardado correctamente");
+            } else {
+                // Navegador
+                saveAs(zipBlob, fileName);
+            }
+
+        } catch (err) {
+            console.error("Error en exportLayerAsShapefile:", err);
+            alert(`Error al exportar: ${err.message}`);
+        }
     };
 
-    if (!geojson.features.length) {
-      alert("No hay entidades válidas para exportar.");
-      return;
+    // Función auxiliar para Blob a Base64
+    function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result.split(",")[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
     }
-
-    console.log("Iniciando generación de shapefile...");
-    const worker = new ExportWorker();
-    
-    const zipBlob = await new Promise((resolve, reject) => {
-      worker.onmessage = (e) => {
-        const { type, blob, message } = e.data;
-        
-        if (type === "done" && blob) {
-          console.log("ZIP recibido del worker, tamaño:", blob.size);
-          if (blob.size < 100) {
-            reject(new Error("Archivo generado demasiado pequeño"));
-          } else {
-            resolve(blob);
-          }
-        } else {
-          reject(new Error(message || "Error en el worker"));
-        }
-        worker.terminate();
-      };
-
-      worker.onerror = (err) => {
-        console.error("Error en worker:", err);
-        reject(err);
-        worker.terminate();
-      };
-
-      worker.postMessage({ geojson });
-    });
-
-    // 3. Guardar el archivo
-    const fileName = `${name.replace(/[^a-z0-9]/gi, '_')}.zip`;
-    
-    if (window.cordova?.plugins?.safMediastore) {
-      // Android
-      const base64 = await blobToBase64(zipBlob);
-      await window.cordova.plugins.safMediastore.writeFile({
-        data: base64,
-        filename: fileName,
-        mimeType: "application/zip"
-      });
-      alert("Shapefile guardado correctamente");
-    } else {
-      // Navegador
-      saveAs(zipBlob, fileName);
-    }
-
-  } catch (err) {
-    console.error("Error en exportLayerAsShapefile:", err);
-    alert(`Error al exportar: ${err.message}`);
-  }
-};
-
-// Función auxiliar para Blob a Base64
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result.split(",")[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
 
 
 
@@ -797,21 +759,21 @@ function blobToBase64(blob) {
         }
         setExportModalOpen(true);
     };
-const handleExportConfirm = async (idx) => {
-  console.log("Exportar clickeado para capa idx:", idx, layers[idx]);
-  try {
-    const entry = layers[idx];
-    await exportLayerAsShapefile(entry);
-    console.log("Exportación completada");
-  } catch (error) {
-    console.error("Error en exportLayerAsShapefile:", error);
-    alert("Error al exportar: " + error.message);
-  }
-  setExportModalOpen(false);
-};
-const handleExportCancel = () => {
-  setExportModalOpen(false);
-};
+    const handleExportConfirm = async (idx) => {
+        console.log("Exportar clickeado para capa idx:", idx, layers[idx]);
+        try {
+            const entry = layers[idx];
+            await exportLayerAsShapefile(entry);
+            console.log("Exportación completada");
+        } catch (error) {
+            console.error("Error en exportLayerAsShapefile:", error);
+            alert("Error al exportar: " + error.message);
+        }
+        setExportModalOpen(false);
+    };
+    const handleExportCancel = () => {
+        setExportModalOpen(false);
+    };
     // ----- JSX de render -----
     return (
         <div>

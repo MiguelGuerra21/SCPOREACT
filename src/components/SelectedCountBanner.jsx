@@ -11,7 +11,6 @@ const SelectedCountBanner = ({
 }) => {
   const [isOpen, setIsOpen] = useState(true);
   const isAndroid = Capacitor.getPlatform() === "android";
-  console.log("Banner isOpen:", isOpen);
   if (count === 0) return null;
 
   const containerStyle = {
