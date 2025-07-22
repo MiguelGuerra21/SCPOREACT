@@ -1,6 +1,6 @@
 // src/components/AppContainer.jsx
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import JSZip from "jszip";
 import shpjs from "shpjs";
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -61,168 +61,116 @@ const AppContainer = () => {
         entry.layer.geometryType === 'polygon'
     );
 
-    // Dentro de AppContainer:
-    const handleBatchEditApply = async (layerIndex, fieldName, newValueRaw) => {
-        const entry = layers[layerIndex];
-        if (!entry) {
-            window.alert("Error interno: capa no encontrada.");
-            return;
-        }
-        const { layer, layerView, selectedIds } = entry;
-        if (!selectedIds || !selectedIds.length) {
-            window.alert("No hay features seleccionadas en la capa.");
-            setBatchEditOpen(false);
-            return;
-        }
-        // Obtener definición del campo
-        const fieldDef = layer.fields.find((f) => f.name === fieldName);
-        if (!fieldDef) {
-            window.alert("Campo no encontrado.");
-            return;
-        }
-        // Parsear newValueRaw según tipo
-        let parsedValue = null;
-        switch (fieldDef.type) {
-            case "integer":
-            case "small-integer":
-                parsedValue = parseInt(newValueRaw, 10);
-                if (isNaN(parsedValue)) {
-                    window.alert("Valor inválido para campo entero.");
-                    return;
-                }
-                break;
-            case "double":
-                parsedValue = parseFloat(newValueRaw);
-                if (isNaN(parsedValue)) {
-                    window.alert("Valor inválido para campo numérico.");
-                    return;
-                }
-                break;
-            case "date":
-                if (!newValueRaw) {
-                    parsedValue = null;
-                } else {
-                    // newValueRaw viene de <input type="date">: "YYYY-MM-DD"
-                    const d = new Date(newValueRaw);
-                    if (isNaN(d.getTime())) {
-                        window.alert("Fecha inválida.");
-                        return;
-                    }
-                    // ArcGIS JS API acepta Date
-                    parsedValue = d;
-                }
-                break;
-            case "boolean":
-                if (newValueRaw === "true") parsedValue = true;
-                else if (newValueRaw === "false") parsedValue = false;
-                else {
-                    window.alert("Selecciona true o false para campo booleano.");
-                    return;
-                }
-                break;
-            case "string":
-                parsedValue = newValueRaw;
-                break;
-            default:
-                parsedValue = newValueRaw;
-        }
+   async function handleBatchEditApply(
+  layerIndex,     // índice en el array `layers`
+  fieldName,      // p.ej. "Fecha ET03"
+  newValueRaw     // "YYYY-MM-DD"
+) {
+  const entry = layers[layerIndex];
+  if (!entry) { alert("Capa no encontrada"); return; }
+  const { layer, selectedIds } = entry;
+  if (!selectedIds.length) { alert("Nada seleccionado"); return; }
 
-        try {
-            // -------------------------------
-            // 1) Consulta previa con queryFeatures para ver valores antiguos
-            const query = layer.createQuery();
-            query.where = "1=1";
-            query.returnGeometry = false;
-            query.outFields = ["*"];
-            let resultsBefore;
-            try {
-                resultsBefore = await layer.queryFeatures(query);
-                console.log(
-                    "DEBUG antes de editar, atributos de todas las features:",
-                    resultsBefore.features.map((f) => ({
-                        OBJECTID: f.attributes.OBJECTID,
-                        valor: f.attributes[fieldName]
-                    }))
-                );
-            } catch (err) {
-                console.error("Error en queryFeatures antes de editar:", err);
-            }
-            // -------------------------------
-            // 2) Editar atributos en layer.source
-            const updates = selectedIds.map(oid => ({
-                attributes: {
-                    OBJECTID: oid,
-                    [fieldName]: parsedValue
-                }
-            }));
+  // extraer número ETnn
+  const m = fieldName.match(/ET\s*0*?(\d+)$/i);
+  const selNum = m ? +m[1] : null;
+  if (selNum == null) { alert("Campo inválido"); return; }
 
-            const editResult = await entry.layer.applyEdits({
-                updateFeatures: updates
-            });
+  // armar lista de campos Fecha ET ≤ selNum
+  const allFecha = layer.fields
+    .filter(f => {
+      const t = f.name.match(/^Fecha\s*ET\s*0*?(\d+)$/i);
+      return t && +t[1] <= selNum;
+    })
+    .map(f => ({
+      name: f.name,
+      type: f.type,
+      num: +f.name.match(/\d+$/)[0]
+    }));
+  if (!allFecha.length) { alert("No hay campos Fecha ET"); return; }
 
-            // ADD ERROR CHECKING HERE
-            if (editResult.updateFeaturesResults) {
-                editResult.updateFeaturesResults.forEach(result => {
-                    if (!result.success) {
-                        console.error("Failed to update feature:", result.error);
-                        // Optional: show specific error to user
-                    }
-                });
-            }
-            // -------------------------------
-            // 3) Consulta posterior con queryFeatures para verificar nuevos valores
-            let resultsAfter;
-            try {
-                // Reusar mismo query
-                resultsAfter = await layer.queryFeatures(query);
-                console.log(
-                    "DEBUG después de editar, atributos de todas las features:",
-                    resultsAfter.features.map((f) => ({
-                        OBJECTID: f.attributes.OBJECTID,
-                        valor: f.attributes[fieldName]
-                    }))
-                );
-            } catch (err) {
-                console.error("Error en queryFeatures después de editar:", err);
-            }
-            // -------------------------------
-            // 4) Forzar redraw del mapa
-            const view = viewRef.current;
-            if (view && typeof view.requestRender === "function") {
-                view.requestRender();
-            } else {
-                // fallback: alternar visibilidad
-                entry.layer.visible = false;
-                entry.layer.visible = true;
-            }
-            // -------------------------------
-            // 5) Si el popup está abierto sobre una feature editada, cerrarlo y reabrir para mostrar nuevo valor
-            if (view && view.popup.open) {
-                const sel = view.popup.selectedFeature;
-                if (sel) {
-                    const oidSel = sel.attributes?.OBJECTID;
-                    if (selectedIds.includes(oidSel)) {
-                        const loc = view.popup.location;
-                        view.popup.close();
-                        // Reabrir popup en la misma feature para que muestre atributos actualizados
-                        view.popup.open({
-                            features: [sel],
-                            location: loc
-                        });
-                    }
-                }
-            }
-            // -------------------------------
-            window.alert(
-                `Se actualizaron ${selectedIds.length} feature(s) en "${entry.name}".`
-            );
-        } catch (err) {
-            console.error("Error al editar atributos en lote:", err);
-            window.alert("Error al aplicar edición en lote: " + err.message);
-        } finally {
-            setBatchEditOpen(false);
-        }
-    };
+  // validar input
+  if (!newValueRaw) { alert("Fecha vacía"); return; }
+  const d = new Date(newValueRaw);
+  if (isNaN(d)) { alert("Formato fecha inválido"); return; }
+  const epoch = d.getTime();
+
+  // leer antes
+  const where = selectedIds.map(id => `OBJECTID=${id}`).join(" OR ");
+  const q = layer.createQuery();
+  q.where = where;
+  q.outFields = allFecha.map(f => f.name);
+  const res = await layer.queryFeatures(q);
+  const before = {};
+  res.features.forEach(feat => {
+    before[feat.attributes.OBJECTID] = feat.attributes;
+  });
+
+  // armar updates
+  const updates = selectedIds.map(oid => {
+    const prev = before[oid] || {};
+    const attrs = { OBJECTID: oid };
+
+    for (const f of allFecha) {
+      const key = f.name;
+      const had = prev[key];
+      const nonEmpty = had != null && String(had).trim() !== "";
+
+      if (f.num === selNum) {
+        // siempre sobreescribe seleccionada
+        attrs[key] = f.type === "date" ? epoch : newValueRaw;
+      }
+      else if (!nonEmpty) {
+        // back‑fill sólo si estaba vacío
+        attrs[key] = f.type === "date" ? epoch : newValueRaw;
+      }
+    }
+
+    return Object.keys(attrs).length > 1 ? { attributes: attrs } : null;
+  }).filter(u => u);
+
+  if (!updates.length) {
+    alert("No hay campos vacíos ni seleccionada para actualizar.");
+    return;
+  }
+
+  // applyEdits
+  const result = await layer.applyEdits({ updateFeatures: updates });
+  if (result.updateFeaturesResults) {
+    const fails = result.updateFeaturesResults.filter(r => !r.success);
+    if (fails.length) alert("Algunas no se actualizaron");
+  }
+
+  // redraw + popup
+  const view = viewRef.current;
+  if (view?.requestRender) view.requestRender();
+  else { layer.visible = false; layer.visible = true; }
+  if (view?.popup.open) {
+    const sel = view.popup.selectedFeature;
+    if (sel && selectedIds.includes(sel.attributes.OBJECTID)) {
+      const loc = view.popup.location;
+      view.popup.close();
+      view.popup.open({ features: [sel], location: loc });
+    }
+  }
+
+  alert(`Actualizadas ${updates.length} entidad(es).`);
+  setBatchEditOpen(false);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     // Sincronizar layersRef.current siempre que cambie layers
@@ -741,13 +689,13 @@ console.log("estadosUnicos:", estadosUnicos);
                 return null;
         }
     };
-    
-const exportLayerAsShapefile = async (entry) => {
-  const { layer, name } = entry;
-  if (!layer) {
-    alert("No hay capa para exportar.");
-    return;
-  }
+
+    const exportLayerAsShapefile = async (entry) => {
+        const { layer, name } = entry;
+        if (!layer) {
+            alert("No hay capa para exportar.");
+            return;
+        }
 
   try {
     setLoadingMessage("Consultando entidades...");
@@ -772,36 +720,36 @@ const exportLayerAsShapefile = async (entry) => {
             geom = webMercatorToGeographic(geom);
           }
 
-          let geometry = null;
-          switch(geom.type) {
-            case "point":
-              geometry = { type: "Point", coordinates: [geom.x, geom.y] };
-              break;
-            case "polyline":
-              geometry = geom.paths.length > 1
-                ? { type: "MultiLineString", coordinates: geom.paths }
-                : { type: "LineString", coordinates: geom.paths[0] };
-              break;
-            case "polygon":
-              geometry = { type: "Polygon", coordinates: geom.rings };
-              break;
-            default:
-              return null;
-          }
+                        let geometry = null;
+                        switch (geom.type) {
+                            case "point":
+                                geometry = { type: "Point", coordinates: [geom.x, geom.y] };
+                                break;
+                            case "polyline":
+                                geometry = geom.paths.length > 1
+                                    ? { type: "MultiLineString", coordinates: geom.paths }
+                                    : { type: "LineString", coordinates: geom.paths[0] };
+                                break;
+                            case "polygon":
+                                geometry = { type: "Polygon", coordinates: geom.rings };
+                                break;
+                            default:
+                                return null;
+                        }
 
-          return {
-            type: "Feature",
-            geometry,
-            properties: f.attributes,
-          };
-        })
-        .filter(Boolean),
-    };
+                        return {
+                            type: "Feature",
+                            geometry,
+                            properties: f.attributes,
+                        };
+                    })
+                    .filter(Boolean),
+            };
 
-    if (!geojson.features.length) {
-      alert("No hay entidades válidas para exportar.");
-      return;
-    }
+            if (!geojson.features.length) {
+                alert("No hay entidades válidas para exportar.");
+                return;
+            }
 
     console.log("Iniciando generación de shapefile...");
     // 3. Generar ZIP
@@ -824,14 +772,14 @@ const exportLayerAsShapefile = async (entry) => {
         worker.terminate();
       };
 
-      worker.onerror = (err) => {
-        console.error("Error en worker:", err);
-        reject(err);
-        worker.terminate();
-      };
+                worker.onerror = (err) => {
+                    console.error("Error en worker:", err);
+                    reject(err);
+                    worker.terminate();
+                };
 
-      worker.postMessage({ geojson });
-    });
+                worker.postMessage({ geojson });
+            });
 
     // 4. Guardar el archivo
     const fileName = `${name.replace(/[^a-z0-9]/gi, '_')}.zip`;
