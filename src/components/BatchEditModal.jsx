@@ -1,134 +1,165 @@
+// BatchEditModal.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import { Capacitor } from "@capacitor/core";
 
 export default function BatchEditModal({ layers, onCancel, onApply }) {
   const isAndroid = Capacitor.getPlatform() === "android";
 
-  // 1) Only layers with some selected features:
+  // 1) Sólo capas poligonales con selección
   const layersWithSel = useMemo(() => {
     return layers
       .map((entry, idx) => ({ entry, idx }))
       .filter(({ entry }) => {
-        // Sólo las capas con features seleccionadas...
         const hasSel = (entry.selectedIds || []).length > 0;
-        // ...y que sean de tipo polígono
         const isPoly = entry.layer.geometryType === "polygon";
         return hasSel && isPoly;
       });
   }, [layers]);
 
-  // 2) Always‑run hooks:
+  // 2) Estado interno
   const [selectedLayerIdx, setSelectedLayerIdx] = useState(
     layersWithSel[0]?.idx ?? 0
   );
   const [selectedField, setSelectedField] = useState("");
   const [dateValue, setDateValue] = useState("");
+  const [availableEtapas, setAvailableEtapas] = useState([]);
 
-  // 3) Build list of “Fecha XXX” → label “Etapa XXX”
-  const etapas = useMemo(() => {
-    if (layersWithSel.length === 0) return [];
+  // 3) Todas las "Fecha ETnn" → { field, etapaNum, label }
+  const allEtapas = useMemo(() => {
+    if (!layersWithSel.length) return [];
     const layer = layersWithSel.find(l => l.idx === selectedLayerIdx).entry.layer;
     return layer.fields
       .map(f => f.name)
-      .filter(name => name.toLowerCase().startsWith("fecha "))
+      .filter(name => /^fecha\s+et\s*\d+/i.test(name))
       .map(name => {
-        const code = name.slice(6); // after "Fecha "
-        return { 
-          label: `Etapa ${code}`, 
-          field: name 
+        const m = name.match(/\d+$/);
+        const num = m ? parseInt(m[0], 10) : NaN;
+        return {
+          field: name,
+          etapaNum: isNaN(num) ? null : num,
+          label: isNaN(num) ? name : `Etapa ${num}`
         };
       })
-      // sort by whatever numeric part you like:
-      .sort((a, b) => (a.label > b.label ? 1 : -1));
+      .filter(e => e.etapaNum !== null)
+      .sort((a, b) => a.etapaNum - b.etapaNum);
   }, [layersWithSel, selectedLayerIdx]);
 
-  // 4) Pick first field by default
+  // 4) Cuando cambie capa o allEtapas, recalculemos availableEtapas
   useEffect(() => {
-    if (etapas.length && !etapas.find(e => e.field === selectedField)) {
-      setSelectedField(etapas[0].field);
+    const layerObj = layersWithSel.find(l => l.idx === selectedLayerIdx);
+    if (!layerObj || !allEtapas.length) {
+      setAvailableEtapas([]);
+      setSelectedField("");
+      return;
     }
-  }, [etapas, selectedField]);
+    const { entry } = layerObj;
+    const oid0 = entry.selectedIds[0];
+    // Construimos outFields: ["Etapa 1", "Etapa 2", ...]
+    const nameFields = allEtapas.map(e => e.label);
+    const nameFieldNames = allEtapas.map(e => `Etapa ${e.etapaNum.toString().padStart(2, "0")}`);
+    const q = entry.layer.createQuery();
+    q.where = `${entry.layer.objectIdField} = ${oid0}`;
+    q.outFields = nameFieldNames;
 
-  // 5) Pre‑fill dateValue from first selected feature
+    entry.layer.queryFeatures(q)
+      .then(res => {
+        const attrs = res.features[0]?.attributes || {};
+        const filtered = allEtapas.filter(e => {
+          const nameField = `Etapa ${e.etapaNum.toString().padStart(2, "0")}`;
+          const value = attrs[nameField];
+          return value != null && String(value).trim() !== "";
+        });
+        // si no hay ninguna, caemos en todas
+        const valid = filtered.length ? filtered : allEtapas;
+        setAvailableEtapas(valid);
+        // reset selectedField si ya no existe
+        if (!valid.find(e => e.field === selectedField)) {
+          setSelectedField(valid[0]?.field || "");
+        }
+      })
+      .catch(() => {
+        setAvailableEtapas(allEtapas);
+        setSelectedField(allEtapas[0]?.field || "");
+      });
+  }, [selectedLayerIdx, allEtapas, layersWithSel, selectedField]);
+
+  // 5) Al cambiar availableEtapas por primera vez
+  useEffect(() => {
+    if (!selectedField && availableEtapas.length) {
+      setSelectedField(availableEtapas[0].field);
+    }
+  }, [availableEtapas, selectedField]);
+
+  // 6) Pre‑llenado de dateValue
   useEffect(() => {
     if (!selectedField) return;
-    const { entry } = layersWithSel.find(l => l.idx === selectedLayerIdx);
+    const layerObj = layersWithSel.find(l => l.idx === selectedLayerIdx);
+    if (!layerObj) return;
+    const { entry } = layerObj;
     const oid = entry.selectedIds[0];
-    entry.layer
-      .queryFeatures({
-        where: `OBJECTID = ${oid}`,
-        outFields: [selectedField]
-      })
+    entry.layer.queryFeatures({
+      where: `OBJECTID = ${oid}`,
+      outFields: [selectedField]
+    })
       .then(res => {
-        const v = res.features[0]?.attributes[selectedField];
-        setDateValue(v ? v.toString().slice(0, 10) : "");
+        const raw = res.features[0]?.attributes[selectedField];
+        let formatted = "";
+        if (raw != null) {
+          // si es número, lo tratamos como epoch
+          if (typeof raw === "number") {
+            const d = new Date(raw);
+            if (!isNaN(d)) formatted = d.toISOString().slice(0,10);
+          }
+          // si es string
+          else if (typeof raw === "string") {
+            const d = new Date(raw);
+            formatted = !isNaN(d) ? d.toISOString().slice(0,10) : raw.slice(0,10);
+          }
+        }
+        setDateValue(formatted);
       })
       .catch(() => setDateValue(""));
   }, [selectedLayerIdx, selectedField, layersWithSel]);
 
-  // 6) Nothing to do?
-  if (layersWithSel.length === 0 || etapas.length === 0) {
-    return null;
-  }
+  // 7) Si no hay nada que mostrar
+  if (!layersWithSel.length || !allEtapas.length) return null;
 
-  // UI styles (same as before)...
-  const backdrop = {
-    position: "fixed", inset: 0,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    display: "flex", justifyContent: "center", alignItems: "center",
-    zIndex: 3000
-  };
-  const modal = {
-    width: 400, borderRadius: 8, overflow: "hidden",
-    boxShadow: "0 4px 16px rgba(0,0,0,0.2)", backgroundColor: "#fff"
-  };
-  const header = {
-    padding: "12px 16px",
-    background: "linear-gradient(90deg, #4facfe, #00f2fe)",
-    color: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between"
-  };
-  const title = { margin: 0, fontSize: 18 };
-  const closeBtn = { background: "none", border: "none", color: "#fff", fontSize: 20, cursor: "pointer" };
-  const body = { padding: 16, display: "flex", flexDirection: "column", gap: 12 };
-  const label = { fontSize: 14, marginBottom: 4, textAlign: "left" };
-  const selectStyle = { width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc", fontSize: 14 };
-  const inputStyle = { ...selectStyle, width: "calc(100% - 16px)" };
-  const footer = { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 };
-  const button = { padding: "8px 16px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 14 };
-  const cancelBtn = { ...button, backgroundColor: "#ccc", color: "#333" };
-  const applyBtn  = { ...button, backgroundColor: "#28a745", color: "#fff" };
-
-  function handleApply() {
-    if (!selectedField || !dateValue) {
-      alert("Selecciona una etapa y una fecha.");
-      return;
-    }
-    onApply(
-      selectedLayerIdx,
-      selectedField,  // e.g. "Fecha ET01"
-      dateValue       // "YYYY-MM-DD"
-    );
-  }
-
-  const current = layersWithSel.find(l => l.idx === selectedLayerIdx);
-
+  // === JSX ===
   return (
-    <div style={backdrop}>
-      <div style={modal}>
-        <div style={header}>
-          <h2 style={title}>Editor de Etapas</h2>
-          <button style={closeBtn} onClick={onCancel}>✕</button>
+    <div style={{
+      position: "fixed", inset: 0,
+      backgroundColor: "rgba(0,0,0,0.5)",
+      display: "flex", justifyContent: "center", alignItems: "center",
+      zIndex: 3000
+    }}>
+      <div style={{
+        width: 400, borderRadius: 8, overflow: "hidden",
+        boxShadow: "0 4px 16px rgba(0,0,0,0.2)", backgroundColor: "#fff"
+      }}>
+        <div style={{
+          padding: "12px 16px",
+          background: "linear-gradient(90deg, #4facfe, #00f2fe)",
+          color: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between"
+        }}>
+          <h2 style={{ margin: 0, fontSize: 18 }}>Editor de Etapas</h2>
+          <button
+            style={{ background: "none", border: "none", color: "#fff", fontSize: 20, cursor: "pointer" }}
+            onClick={onCancel}
+          >✕</button>
         </div>
-        <div style={body}>
+        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* Selector de capa */}
           {layersWithSel.length > 1 && (
             <div>
-              <div style={label}>
-                Capa ({current.entry.selectedIds.length} features):
-              </div>
+              <label style={{ display: "block", marginBottom: 4 }}>Capa:</label>
               <select
-                style={selectStyle}
+                style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
                 value={selectedLayerIdx}
-                onChange={e => setSelectedLayerIdx(Number(e.target.value))}
+                onChange={e => {
+                  setSelectedLayerIdx(Number(e.target.value));
+                  setSelectedField("");
+                  setDateValue("");
+                }}
               >
                 {layersWithSel.map(({ entry, idx }) => (
                   <option key={idx} value={idx}>
@@ -139,47 +170,45 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
             </div>
           )}
 
-          {/* Etapa dropdown */}
+          {/* Selector de etapa */}
           <div>
-            <div style={label}>Etapa a editar:</div>
+            <label style={{ display: "block", marginBottom: 4 }}>Etapa a editar:</label>
             <select
-              style={selectStyle}
+              style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
               value={selectedField}
               onChange={e => setSelectedField(e.target.value)}
             >
-              {etapas.map(({ label, field }) => (
-                <option key={field} value={field}>
-                  {label}
+              {availableEtapas.map(e => (
+                <option key={e.field} value={e.field}>
+                  {e.label}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Date picker */}
+          {/* Selector de fecha */}
           <div>
-            <div style={label}>
-              Fecha para “{etapas.find(e => e.field === selectedField)?.label}”:
-            </div>
+            <label style={{ display: "block", marginBottom: 4 }}>
+              Fecha para “{availableEtapas.find(e => e.field === selectedField)?.label}”:
+            </label>
             <input
               type="date"
-              style={inputStyle}
+              style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
               value={dateValue}
               onChange={e => setDateValue(e.target.value)}
             />
           </div>
 
-          <div style={footer}>
-            <button style={cancelBtn} onClick={onCancel}>
-              Cancelar
-            </button>
+          {/* Botones */}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <button
-              style={applyBtn}
-              onClick={handleApply}
-              onMouseEnter={e => e.currentTarget.style.backgroundColor = "#218838"}
-              onMouseLeave={e => e.currentTarget.style.backgroundColor = "#28a745"}
-            >
-              Aplicar
-            </button>
+              style={{ padding: "8px 16px", backgroundColor: "#ccc", border: "none", borderRadius: 4, cursor: "pointer" }}
+              onClick={onCancel}
+            >Cancelar</button>
+            <button
+              style={{ padding: "8px 16px", backgroundColor: "#28a745", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }}
+              onClick={() => onApply(selectedLayerIdx, selectedField, dateValue)}
+            >Aplicar</button>
           </div>
         </div>
       </div>

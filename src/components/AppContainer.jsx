@@ -1,6 +1,6 @@
 // src/components/AppContainer.jsx
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import JSZip from "jszip";
 import shpjs from "shpjs";
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -59,126 +59,112 @@ const AppContainer = () => {
         entry.layer.geometryType === 'polygon'
     );
 
-    const handleBatchEditApply = async (
-        layerIndex,      // ahora es índice en el array `layers`
-        fieldName,       // e.g. "Fecha ET03"
-        newValueRaw      // la fecha seleccionada en formato "YYYY-MM-DD"
-    ) => {
-        // 1) Obtenemos la entrada por índice
-        const entry = layers[layerIndex];
-        if (!entry) {
-            window.alert("Error interno: capa no encontrada.");
-            return;
-        }
-        const { layer, selectedIds } = entry;
-        if (!selectedIds?.length) {
-            window.alert("No hay features seleccionadas en la capa.");
-            setBatchEditOpen(false);
-            return;
-        }
+   async function handleBatchEditApply(
+  layerIndex,     // índice en el array `layers`
+  fieldName,      // p.ej. "Fecha ET03"
+  newValueRaw     // "YYYY-MM-DD"
+) {
+  const entry = layers[layerIndex];
+  if (!entry) { alert("Capa no encontrada"); return; }
+  const { layer, selectedIds } = entry;
+  if (!selectedIds.length) { alert("Nada seleccionado"); return; }
 
-        // 2) Extraer el número de etapa
-        const etapaMatch = fieldName.match(/ET\s*0*?(\d+)$/i);
-        const selectedEtapaNum = etapaMatch ? parseInt(etapaMatch[1], 10) : null;
-        if (selectedEtapaNum == null) {
-            window.alert(`Nombre de campo inválido: ${fieldName}`);
-            return;
-        }
+  // extraer número ETnn
+  const m = fieldName.match(/ET\s*0*?(\d+)$/i);
+  const selNum = m ? +m[1] : null;
+  if (selNum == null) { alert("Campo inválido"); return; }
 
-        // 3) Recopilar los campos "Fecha ETnn" hasta la etapa seleccionada
-        const fechaFieldsToUpdate = layer.fields
-            .filter(f => {
-                const m = f.name.match(/^Fecha\s*ET\s*0*?(\d+)$/i);
-                const num = m ? parseInt(m[1], 10) : NaN;
-                return !isNaN(num) && num <= selectedEtapaNum;
-            })
-            .map(f => ({ name: f.name, type: f.type }));
+  // armar lista de campos Fecha ET ≤ selNum
+  const allFecha = layer.fields
+    .filter(f => {
+      const t = f.name.match(/^Fecha\s*ET\s*0*?(\d+)$/i);
+      return t && +t[1] <= selNum;
+    })
+    .map(f => ({
+      name: f.name,
+      type: f.type,
+      num: +f.name.match(/\d+$/)[0]
+    }));
+  if (!allFecha.length) { alert("No hay campos Fecha ET"); return; }
 
-        if (!fechaFieldsToUpdate.length) {
-            window.alert("No se encontraron campos Fecha ET anteriores.");
-            return;
-        }
+  // validar input
+  if (!newValueRaw) { alert("Fecha vacía"); return; }
+  const d = new Date(newValueRaw);
+  if (isNaN(d)) { alert("Formato fecha inválido"); return; }
+  const epoch = d.getTime();
 
-        // 4) Validar la nueva fecha
-        if (!newValueRaw) {
-            window.alert("Selecciona una fecha válida.");
-            return;
-        }
-        const parsedDate = new Date(newValueRaw);
-        if (isNaN(parsedDate.getTime())) {
-            window.alert("Fecha inválida.");
-            return;
-        }
-        const epoch = parsedDate.getTime();
+  // leer antes
+  const where = selectedIds.map(id => `OBJECTID=${id}`).join(" OR ");
+  const q = layer.createQuery();
+  q.where = where;
+  q.outFields = allFecha.map(f => f.name);
+  const res = await layer.queryFeatures(q);
+  const before = {};
+  res.features.forEach(feat => {
+    before[feat.attributes.OBJECTID] = feat.attributes;
+  });
 
-        try {
-            // 5) (Opcional) Consulta previa para debug
-            const where = selectedIds.map(id => `OBJECTID = ${id}`).join(" OR ");
-            const query = layer.createQuery();
-            query.where = where;
-            query.outFields = fechaFieldsToUpdate.map(f => f.name);
-            const before = await layer.queryFeatures(query);
-            console.log("ANTES de editar:", before.features.map(f => f.attributes));
+  // armar updates
+  const updates = selectedIds.map(oid => {
+    const prev = before[oid] || {};
+    const attrs = { OBJECTID: oid };
 
-            // 6) Preparar los updates
-            const updates = selectedIds.map(oid => {
-                const attrs = { OBJECTID: oid };
-                for (const f of fechaFieldsToUpdate) {
-                    if (f.type === "date") {
-                        // Para campos de tipo date, usamos milisegundos
-                        attrs[f.name] = epoch;
-                    } else {
-                        // Para strings u otros, dejamos el valor crudo
-                        attrs[f.name] = newValueRaw;
-                    }
-                }
-                return { attributes: attrs };
-            });
+    for (const f of allFecha) {
+      const key = f.name;
+      const had = prev[key];
+      const nonEmpty = had != null && String(had).trim() !== "";
 
-            // 7) Ejecutar applyEdits
-            const result = await layer.applyEdits({ updateFeatures: updates });
-            if (result.updateFeaturesResults) {
-                const fails = result.updateFeaturesResults.filter(r => !r.success);
-                if (fails.length) {
-                    console.error("Errores al actualizar:", fails);
-                    window.alert("Algunas entidades no pudieron actualizarse.");
-                }
-            }
+      if (f.num === selNum) {
+        // siempre sobreescribe seleccionada
+        attrs[key] = f.type === "date" ? epoch : newValueRaw;
+      }
+      else if (!nonEmpty) {
+        // back‑fill sólo si estaba vacío
+        attrs[key] = f.type === "date" ? epoch : newValueRaw;
+      }
+    }
 
-            // 8) Consulta posterior para debug
-            const after = await layer.queryFeatures(query);
-            console.log("DESPUÉS de editar:", after.features.map(f => f.attributes));
+    return Object.keys(attrs).length > 1 ? { attributes: attrs } : null;
+  }).filter(u => u);
 
-            // 9) Forzar redraw / refrescar popup
-            const view = viewRef.current;
-            if (view?.requestRender) {
-                view.requestRender();
-            } else {
-                layer.visible = false;
-                layer.visible = true;
-            }
-            if (view?.popup.open) {
-                const selFeat = view.popup.selectedFeature;
-                if (selFeat && selectedIds.includes(selFeat.attributes.OBJECTID)) {
-                    const loc = view.popup.location;
-                    view.popup.close();
-                    view.popup.open({ features: [selFeat], location: loc });
-                }
-            }
+  if (!updates.length) {
+    alert("No hay campos vacíos ni seleccionada para actualizar.");
+    return;
+  }
 
-            // 10) Aviso al usuario
-            const campos = fechaFieldsToUpdate.map(f => f.name).join(", ");
-            window.alert(
-                `Se actualizaron ${selectedIds.length} feature(s) en "${entry.name}"\n` +
-                `Campos modificados: ${campos}`
-            );
-        } catch (err) {
-            console.error("Error en edición en lote:", err);
-            window.alert("Error al editar atributos en lote: " + err.message);
-        } finally {
-            setBatchEditOpen(false);
-        }
-    };
+  // applyEdits
+  const result = await layer.applyEdits({ updateFeatures: updates });
+  if (result.updateFeaturesResults) {
+    const fails = result.updateFeaturesResults.filter(r => !r.success);
+    if (fails.length) alert("Algunas no se actualizaron");
+  }
+
+  // redraw + popup
+  const view = viewRef.current;
+  if (view?.requestRender) view.requestRender();
+  else { layer.visible = false; layer.visible = true; }
+  if (view?.popup.open) {
+    const sel = view.popup.selectedFeature;
+    if (sel && selectedIds.includes(sel.attributes.OBJECTID)) {
+      const loc = view.popup.location;
+      view.popup.close();
+      view.popup.open({ features: [sel], location: loc });
+    }
+  }
+
+  alert(`Actualizadas ${updates.length} entidad(es).`);
+  setBatchEditOpen(false);
+}
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -530,7 +516,6 @@ const AppContainer = () => {
             query.returnGeometry = true;
             query.outFields = ["*"];
             const result = await layer.queryFeatures(query);
-            console.log("Features consultadas:", result.features.length);
 
             // 2. Construir GeoJSON (mantener tu lógica actual)
             const geojson = {
