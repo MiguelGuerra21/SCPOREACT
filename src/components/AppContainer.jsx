@@ -40,6 +40,7 @@ const AppContainer = () => {
     const [layerIndex, setLayerIndex] = useState(0);
     const [layerTotal, setLayerTotal] = useState(0);
     const [loadingMessage, setLoadingMessage] = useState("");
+    const [stateColors, setStateColors] = useState({}); // <--- nuevo estado
 
     // Ref al MapView (instancia de ArcGIS MapView)
     const viewRef = useRef(null);
@@ -302,31 +303,39 @@ const AppContainer = () => {
 
     // Genera un color distintivo según índice
     const generateColorForIndex = (index) => {
-        const hue = (index * 60) % 360;
-        const saturation = 70;
-        const lightness = 50;
-        const h = hue / 360;
-        const s = saturation / 100;
-        const l = lightness / 100;
-        let r, g, b;
-        if (s === 0) {
-            r = g = b = l;
-        } else {
-            const hue2rgb = (p, q, t) => {
-                if (t < 0) t += 1;
-                if (t > 1) t -= 1;
-                if (t < 1 / 6) return p + (q - p) * 6 * t;
-                if (t < 1 / 2) return q;
-                if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-                return p;
-            };
-            const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-            const p = 2 * l - q;
-            r = hue2rgb(p, q, h + 1 / 3);
-            g = hue2rgb(p, q, h);
-            b = hue2rgb(p, q, h - 1 / 3);
-        }
-        return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+        // Cada estado avanza 20° en el espectro HSL desde 10° hasta 120°
+    // (Si pasamos 120°, nos mantenemos en verde)
+    const startHue = 10;
+    const step = 20;
+    const hue = Math.min(startHue + index * step, 120);
+
+    const saturation = 90; // saturación alta para colores vivos
+    const lightness = 45;  // contraste bueno
+
+    // Convertimos HSL a RGB
+    const h = hue / 360;
+    const s = saturation / 100;
+    const l = lightness / 100;
+
+    let r, g, b;
+    if (s === 0) {
+        r = g = b = l;
+    } else {
+        const hue2rgb = (p, q, t) => {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1 / 6) return p + (q - p) * 6 * t;
+            if (t < 1 / 2) return q;
+            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+            return p;
+        };
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1 / 3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1 / 3);
+    }
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
     };
 
     // Carga shp-write UMD desde CDN (window.shpwrite)
@@ -342,187 +351,362 @@ const AppContainer = () => {
     };
 
     // ----- Manejador de apertura de archivo (shapefile ZIP) -----
-    const handleFileOpen = async (file) => {
-        const view = viewRef.current;
-        if (!file || !view) return;
+const handleFileOpen = async (file) => {
+  const view = viewRef.current;
+  if (!file || !view) return;
 
-        const newId = layerIdRef.current++;
-        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-        if (layersRef.current.some((e) => e.name === nameWithoutExt)) {
-            window.alert("No puedes cargar dos veces la misma capa");
-            return;
-        }
+  const newId = layerIdRef.current++;
+  const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
+  if (layersRef.current.some((e) => e.name === nameWithoutExt)) {
+    window.alert("No puedes cargar dos veces la misma capa");
+    return;
+  }
 
-        setLoading(true);
-        setProgress(0);
-        setProgressCurrent(0);
-        setProgressTotal(0);
+  setLoading(true);
+  setProgress(0);
+  setProgressCurrent(0);
+  setProgressTotal(0);
 
-        try {
-            setLoadingMessage("Descomprimiendo archivo ZIP ");
-            const arrayBuffer = await file.arrayBuffer();
-            const zip = await JSZip.loadAsync(arrayBuffer);
-            setLoadingMessage("Leyendo archivos ");
-            const fileNames = Object.keys(zip.files);
-            const hasPrj = fileNames.some((name) =>
-                name.toLowerCase().endsWith(".prj")
-            );
-            if (!hasPrj) {
-                window.alert(
-                    "No se puede mostrar una capa no geolocalizada junto a las localizadas"
-                );
-                setLoading(false);
-                return;
+  try {
+    setLoadingMessage("Descomprimiendo archivo ZIP ");
+    const arrayBuffer = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(arrayBuffer);
+
+    setLoadingMessage("Leyendo archivos ");
+    const fileNames = Object.keys(zip.files);
+    const hasPrj = fileNames.some((name) =>
+      name.toLowerCase().endsWith(".prj")
+    );
+    if (!hasPrj) {
+      window.alert(
+        "No se puede mostrar una capa no geolocalizada junto a las localizadas"
+      );
+      setLoading(false);
+      return;
+    }
+
+    setLoadingMessage("Parseando shapefile y construyendo features ");
+    const geojson = await shpjs(arrayBuffer);
+    if (!geojson || !geojson.features?.length) {
+      console.warn("No valid features found in shapefile:", file.name);
+      setLoading(false);
+      return;
+    }
+
+    const [r, g, b] = generateColorForIndex(newId);
+
+    // --- Detectar campos de fecha dinámicamente ---
+// --- Detectar campos de fecha dinámicamente ---
+// --- Función para validar fecha ---
+function esFechaValida(val) {
+  if (val instanceof Date) {
+    return val.getFullYear() >= 1900;
+  }
+  if (typeof val === "string" && val.trim() !== "") {
+    const d = new Date(val);
+    return !isNaN(d) && d.getFullYear() >= 1900;
+  }
+  return false;
+}
+
+// --- Inicializar sets ---
+const fechaCamposSet = new Set();
+const etapaCamposSet = new Set();
+const estadosSet = new Set();
+
+// --- Recorrer features una sola vez ---
+geojson.features.forEach((feature) => {
+  const props = feature.properties;
+
+  Object.keys(props).forEach((key) => {
+    if (key.startsWith("Fecha ")) fechaCamposSet.add(key);
+    if (key.startsWith("Etapa ")) etapaCamposSet.add(key);
+  });
+});
+
+// --- Ordenar campos ---
+const sortByNum = (a, b) => {
+  const numA = parseInt(a.match(/\d+/)?.[0] ?? "0");
+  const numB = parseInt(b.match(/\d+/)?.[0] ?? "0");
+  return numA - numB;
+};
+
+const fechaCampos = Array.from(fechaCamposSet).sort(sortByNum);
+const etapaCampos = Array.from(etapaCamposSet).sort(sortByNum);
+
+console.log("fechaCampos:", fechaCampos);
+console.log("etapaCampos:", etapaCampos);
+
+// --- Función para detectar estado principal ---
+function detectarEstado(feature) {
+  for (let i = fechaCampos.length - 1; i >= 0; i--) {
+    const fechaCampo = fechaCampos[i];
+    const fechaVal = feature.properties[fechaCampo];
+    if (!esFechaValida(fechaVal)) continue;
+
+    const etapaNumero = parseInt(fechaCampo.match(/\d+/)?.[0], 10);
+    if (!etapaNumero) return "Sin estado";
+
+    const etapaCampo = `Etapa ${etapaNumero.toString().padStart(2, "0")}`;
+    const estadoVal = feature.properties[etapaCampo];
+
+    return estadoVal && estadoVal.trim() !== "" ? estadoVal.trim() : "Sin estado";
+  }
+  return "Sin estado";
+}
+
+// --- Recopilar estados ---
+geojson.features.forEach((f) => {
+  estadosSet.add(detectarEstado(f));
+  etapaCampos.forEach((campo) => {
+    const val = f.properties[campo];
+    if (val && val.trim() !== "") estadosSet.add(val.trim());
+  });
+});
+
+console.log("estadosSet:", estadosSet);
+
+// --- Ordenar estados ---
+// Creamos una lista de estados en el orden en que aparecen las etapas
+const ordenDinamico = [];
+etapaCampos.forEach((campo) => {
+  geojson.features.forEach((f) => {
+    const val = f.properties[campo];
+    if (val && !ordenDinamico.includes(val)) {
+      ordenDinamico.push(val);
+    }
+  });
+});
+
+// Añadimos "Sin estado" al final si no está
+if (!ordenDinamico.includes("Sin estado")) {
+  ordenDinamico.push("Sin estado");
+}
+
+const estadosUnicos = Array.from(estadosSet).sort((a, b) => {
+  const indexA = ordenDinamico.indexOf(a);
+  const indexB = ordenDinamico.indexOf(b);
+
+  if (indexA === -1 && indexB === -1) return a.localeCompare(b, "es");
+  if (indexA === -1) return 1;
+  if (indexB === -1) return -1;
+
+  return indexA - indexB;
+});
+
+console.log("estadosUnicos:", estadosUnicos);
+
+
+    // --- Crear campos dinámicos ---
+    const firstProps = geojson.features[0]?.properties || {};
+    const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
+      let type;
+      if (typeof value === "number") type = "double";
+      else if (typeof value === "boolean") type = "boolean";
+      else if (value instanceof Date) type = "date";
+      else type = "string";
+      return { name: key, alias: key, type };
+    });
+    dynamicFields.push({
+      name: "estadoActual",
+      alias: "Estado Actual",
+      type: "string",
+    });
+
+    // --- Asignar colores ---
+    const estadoAColor = {};
+    estadosUnicos.forEach((estado, i) => {
+      if (estado === "Sin estado") {
+        estadoAColor[estado] = [255, 255, 255, 0.5];
+      } else {
+        const baseColor = generateColorForIndex(i);
+        estadoAColor[estado] = [...baseColor, 0.5]; // semitransparente
+      }
+    });
+    console.log("Colores asignados en handleFileOpen:", estadoAColor);
+    // --- Detectar tipo de geometría ---
+    const geomType0 = geojson.features[0]?.geometry?.type;
+    let geometryType = "polygon";
+    if (geomType0 === "Point") geometryType = "point";
+    else if (geomType0 === "LineString" || geomType0 === "MultiLineString")
+      geometryType = "polyline";
+
+    // --- Construir uniqueValueInfos ---
+    const uniqueValueInfos = estadosUnicos.map((estado) => {
+      let symbol;
+      if (estado === "Sin estado") {
+        // borde negro, sin relleno
+        symbol =
+          geometryType === "point"
+            ? {
+                type: "simple-marker",
+                size: "8px",
+                style: "circle",
+                color: [0, 0, 0, 0],
+                outline: { color: [0, 0, 0, 1], width: 1 },
+              }
+            : geometryType === "polyline"
+            ? { type: "simple-line", color: [0, 0, 0, 1], width: 2 }
+            : {
+                type: "simple-fill",
+                color: [0, 0, 0, 0],
+                outline: { color: [0, 0, 0, 1], width: 2 },
+              };
+      } else {
+        const baseColor = estadoAColor[estado];
+        const borderColor = baseColor
+          ? [baseColor[0], baseColor[1], baseColor[2], 1]
+          : [0, 0, 0, 1];
+        symbol =
+          geometryType === "point"
+            ? {
+                type: "simple-marker",
+                size: "8px",
+                style: "circle",
+                color: baseColor,
+                outline: { color: borderColor, width: 1 },
+              }
+            : geometryType === "polyline"
+            ? { type: "simple-line", color: borderColor, width: 2 }
+            : {
+                type: "simple-fill",
+                color: baseColor,
+                outline: { color: borderColor, width: 2 },
+              };
+      }
+      return { value: estado, symbol, label: estado };
+    });
+    // --- Crear FeatureLayer ---
+    const featureLayer = new FeatureLayer({
+      source: [],
+      objectIdField: "OBJECTID",
+      geometryType,
+      spatialReference: { wkid: 4326 },
+      fields: [...dynamicFields],
+      renderer: {
+        type: "unique-value",
+        field: "estadoActual",
+        defaultSymbol:
+          geometryType === "point"
+            ? {
+                type: "simple-marker",
+                size: "8px",
+                style: "circle",
+                color: [0, 0, 0, 0],
+                outline: { color: [0, 0, 0, 1], width: 1 },
+              }
+            : geometryType === "polyline"
+            ? { type: "simple-line", color: [0, 0, 0, 1], width: 2 }
+            : {
+                type: "simple-fill",
+                color: [0, 0, 0, 0],
+                outline: { color: [0, 0, 0, 1], width: 2 },
+              },
+        uniqueValueInfos,
+      },
+      popupTemplate: {
+        title: `${nameWithoutExt} - ID:` + "{fid}",
+        content: [
+          {
+            type: "fields",
+            fieldInfos: dynamicFields.map((f) => ({
+              fieldName: f.name,
+              label: f.alias,
+            })),
+          },
+        ],
+      },
+    });
+    setLoadingMessage("Agregando features al mapa ");
+    view.map.add(featureLayer);
+    await featureLayer.when();
+
+    const batchSize = 1000;
+    const allFeatures = geojson.features;
+    const total = allFeatures.length;
+
+    setProgress(0);
+    setProgressCurrent(0);
+    setProgressTotal(total);
+
+    let objectIdCounter = 0;
+
+    for (let i = 0; i < total; i += batchSize) {
+      const batch = allFeatures.slice(i, i + batchSize)
+        .map((f) => {
+          const geometry = convertGeometry(f.geometry);
+          if (!geometry) return null;
+
+          const propsRaw = f.properties || {};
+          const propsClean = {};
+          Object.entries(propsRaw).forEach(([key, value]) => {
+            if (value instanceof Date) {
+              const yr = value.getFullYear();
+              propsClean[key] = yr < 1900 ? null : value;
+            } else {
+              propsClean[key] = value;
             }
-            setLoadingMessage("Parseando shapefile y construyendo features ");
-            const geojson = await shpjs(arrayBuffer);
-            if (!geojson || !geojson.features?.length) {
-                console.warn("No valid features found in shapefile:", file.name);
-                setLoading(false);
-                return;
-            }
+          });
 
-            const [r, g, b] = generateColorForIndex(newId);
-            const fillColor = [r, g, b, 0.3];
-            const outlineColor = [r, g, b, 1];
+          // Asignar estadoActual
+          propsClean.estadoActual = detectarEstado(f);
 
-            const geomType0 = geojson.features[0]?.geometry?.type;
-            let geometryType = "polygon";
-            if (geomType0 === "Point") geometryType = "point";
-            else if (geomType0 === "LineString" || geomType0 === "MultiLineString")
-                geometryType = "polyline";
+          return {
+            geometry,
+            attributes: { OBJECTID: objectIdCounter++, ...propsClean },
+          };
+        })
+        .filter(Boolean);
 
-            const firstProps = geojson.features[0]?.properties || {};
-            const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
-                let type;
-                if (typeof value === "number") type = "double";
-                else if (typeof value === "boolean") type = "boolean";
-                else if (value instanceof Date) type = "date";
-                else type = "string";
-                return { name: key, alias: key, type };
-            });
+      if (batch.length > 0) {
+        await featureLayer.applyEdits({ addFeatures: batch });
+      }
 
-            // Crear FeatureLayer vacío
-            const featureLayer = new FeatureLayer({
-                source: [],
-                objectIdField: "OBJECTID",
-                geometryType,
-                spatialReference: { wkid: 4326 },
-                fields: [...dynamicFields],
-                renderer: {
-                    type: "simple",
-                    symbol: {
-                        type:
-                            geometryType === "point"
-                                ? "simple-marker"
-                                : geometryType === "polyline"
-                                    ? "simple-line"
-                                    : "simple-fill",
-                        color: geometryType === "point" ? [r, g, b] : fillColor,
-                        outline:
-                            geometryType === "polygon"
-                                ? { color: outlineColor, width: 2 }
-                                : null,
-                        size: geometryType === "point" ? "8px" : null,
-                        width: geometryType === "polyline" ? 2 : null,
-                    },
-                },
-                popupTemplate: {
-                    title: `${nameWithoutExt} - ID:` + "{fid}",
-                    content: [
-                        {
-                            type: "fields",
-                            fieldInfos: dynamicFields.map((f) => ({
-                                fieldName: f.name,
-                                label: f.alias,
-                            })),
-                        },
-                    ],
-                },
-            });
-            setLoadingMessage("Agregando features al mapa ");
-            view.map.add(featureLayer);
-            await featureLayer.when();
+      // Progreso
+      setProgressCurrent((prev) => {
+        const current = Math.min(prev + batch.length, total);
+        setProgress((current / total) * 100);
+        return current;
+      });
 
-            const batchSize = 1000;
-            const allFeatures = geojson.features;
-            const total = allFeatures.length;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
 
-            setProgress(0);
-            setProgressCurrent(0);
-            setProgressTotal(total);
+    const extentResult = await featureLayer.queryExtent();
+    if (extentResult?.extent) {
+      await view.goTo({ target: extentResult.extent, padding: 50 });
+    }
+    const layerView = await view.whenLayerView(featureLayer);
 
-            let objectIdCounter = 0;
-
-            for (let i = 0; i < total; i += batchSize) {
-                const batch = allFeatures.slice(i, i + batchSize)
-                    .map((f) => {
-                        const geometry = convertGeometry(f.geometry);
-                        if (!geometry) return null;
-
-                        const propsRaw = f.properties || {};
-                        const propsClean = {};
-                        Object.entries(propsRaw).forEach(([key, value]) => {
-                            if (value instanceof Date) {
-                                const yr = value.getFullYear();
-                                propsClean[key] = yr < 1900 ? null : value;
-                            } else {
-                                propsClean[key] = value;
-                            }
-                        });
-
-                        return {
-                            geometry,
-                            attributes: { OBJECTID: objectIdCounter++, ...propsClean },
-                        };
-                    })
-                    .filter(Boolean);
-
-                if (batch.length > 0) {
-                    await featureLayer.applyEdits({ addFeatures: batch });
-                }
-
-                // Actualizar progreso
-                setProgressCurrent((prev) => {
-                    const current = Math.min(prev + batch.length, total);
-                    setProgress((current / total) * 100);
-                    return current;
-                });
-
-                // Pequeña pausa para no bloquear UI
-                await new Promise((resolve) => setTimeout(resolve, 10));
-            }
-
-            const extentResult = await featureLayer.queryExtent();
-            if (extentResult?.extent) {
-                await view.goTo({ target: extentResult.extent, padding: 50 });
-            }
-            const layerView = await view.whenLayerView(featureLayer);
-
-            const newEntry = {
-                id: newId,
-                name: nameWithoutExt || `Layer ${newId}`,
-                layer: featureLayer,
-                layerView,
-                visible: true,
-                highlightHandle: null,
-                selectedIds: [],
-                extent: extentResult?.extent || null,
-                color: [r, g, b],
-            };
-            setLayers((prev) => [...prev, newEntry]);
-
-        } catch (err) {
-            console.error("Error procesando shapefile:", file.name, err);
-            window.alert("Error al procesar shapefile: " + err.message);
-        } finally {
-            setLoading(false);
-            setProgress(0);
-            setProgressCurrent(0);
-            setProgressTotal(0);
-            setLoadingMessage("");
-        }
+    const newEntry = {
+        id: newId,
+        name: nameWithoutExt || `Layer ${newId}`,
+        layer: featureLayer,
+        layerView,
+        visible: true,
+        highlightHandle: null,
+        selectedIds: [],
+        extent: extentResult?.extent || null,
+        uniqueValueInfos,
+        estados: estadosUnicos,
+        stateColors: estadoAColor,  
     };
+    setStateColors(estadoAColor);
+    setLayers((prev) => [...prev, newEntry]);
+
+  } catch (err) {
+    console.error("Error procesando shapefile:", file.name, err);
+    window.alert("Error al procesar shapefile: " + err.message);
+  } finally {
+    setLoading(false);
+    setProgress(0);
+    setProgressCurrent(0);
+    setProgressTotal(0);
+    setLoadingMessage("");
+  }
+};
+
+
 
 
 
@@ -894,6 +1078,7 @@ const handleExportCancel = () => {
                 onClearMap={handleClearMap}
                 onCloseApp={handleCloseApp}
                 layers={layers}
+                stateColors={stateColors}
                 onToggleVisibility={toggleLayerVisibility}
                 onCenterView={handleCenterView}
                 onRemoveLayer={(id) => {
