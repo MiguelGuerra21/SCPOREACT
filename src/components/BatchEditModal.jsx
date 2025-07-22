@@ -26,69 +26,85 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
 
   // 3) Todas las "Fecha ETnn" → { field, etapaNum, label }
   const allEtapas = useMemo(() => {
-    if (!layersWithSel.length) return [];
-    const layer = layersWithSel.find(l => l.idx === selectedLayerIdx).entry.layer;
-    return layer.fields
+    const lw = layersWithSel.find(l => l.idx === selectedLayerIdx);
+    if (!lw) return [];
+    return lw.entry.layer.fields
       .map(f => f.name)
-      .filter(name => /^fecha\s+et\s*\d+/i.test(name))
+      .filter(name => /^Fecha\s+ET\s*\d+$/i.test(name))
       .map(name => {
-        const m = name.match(/\d+$/);
-        const num = m ? parseInt(m[0], 10) : NaN;
+        const num = parseInt(name.match(/\d+$/)[0], 10);
+        const etapaField = `Etapa ${String(num).padStart(2, "0")}`; // <-- CAMBIO
         return {
-          field: name,
-          etapaNum: isNaN(num) ? null : num,
-          label: isNaN(num) ? name : `Etapa ${num}`
+          field: name,      // p.ej. "Fecha ET03"
+          num,              // 3
+          etapaField,       // "Etapa 03"
+          label: `Etapa ${num}` 
         };
       })
-      .filter(e => e.etapaNum !== null)
-      .sort((a, b) => a.etapaNum - b.etapaNum);
+      .sort((a, b) => a.num - b.num);
   }, [layersWithSel, selectedLayerIdx]);
 
-  // 4) Cuando cambie capa o allEtapas, recalculemos availableEtapas
+  // 4) Filtrar sólo las etapas cuyo nombre real no esté vacío
   useEffect(() => {
-    const layerObj = layersWithSel.find(l => l.idx === selectedLayerIdx);
-    if (!layerObj || !allEtapas.length) {
+    const lw = layersWithSel.find(l => l.idx === selectedLayerIdx);
+    if (!lw || !allEtapas.length) {
       setAvailableEtapas([]);
-      setSelectedField("");
       return;
     }
-    const { entry } = layerObj;
+    const { entry } = lw;
     const oid0 = entry.selectedIds[0];
-    // Construimos outFields: ["Etapa 1", "Etapa 2", ...]
-    const nameFields = allEtapas.map(e => e.label);
-    const nameFieldNames = allEtapas.map(e => `Etapa ${e.etapaNum.toString().padStart(2, "0")}`);
+
+    // **Usamos ahora etapaField** para el outFields:
+    const nameFields = allEtapas.map(e => e.etapaField);
+
     const q = entry.layer.createQuery();
     q.where = `${entry.layer.objectIdField} = ${oid0}`;
-    q.outFields = nameFieldNames;
+    q.outFields = nameFields;
 
     entry.layer.queryFeatures(q)
       .then(res => {
         const attrs = res.features[0]?.attributes || {};
-        const filtered = allEtapas.filter(e => {
-          const nameField = `Etapa ${e.etapaNum.toString().padStart(2, "0")}`;
-          const value = attrs[nameField];
-          return value != null && String(value).trim() !== "";
+        // filtrado: sólo los que efectivamente tienen nombre
+        const valid = allEtapas.filter(e => {
+          const val = attrs[e.etapaField];      // <-- CAMBIO
+          return val != null && String(val).trim() !== "";
         });
-        // si no hay ninguna, caemos en todas
-        const valid = filtered.length ? filtered : allEtapas;
-        setAvailableEtapas(valid);
-        // reset selectedField si ya no existe
-        if (!valid.find(e => e.field === selectedField)) {
-          setSelectedField(valid[0]?.field || "");
-        }
+        setAvailableEtapas(valid.length ? valid : allEtapas);
+        setSelectedField(valid[0]?.field || allEtapas[0]?.field || "");
       })
       .catch(() => {
         setAvailableEtapas(allEtapas);
         setSelectedField(allEtapas[0]?.field || "");
       });
-  }, [selectedLayerIdx, allEtapas, layersWithSel, selectedField]);
+  }, [layersWithSel, selectedLayerIdx, allEtapas]);
 
-  // 5) Al cambiar availableEtapas por primera vez
+  // 5) Pre‑llenar la primera fecha
   useEffect(() => {
-    if (!selectedField && availableEtapas.length) {
-      setSelectedField(availableEtapas[0].field);
-    }
-  }, [availableEtapas, selectedField]);
+    if (!selectedField) return;
+    const lw = layersWithSel.find(l => l.idx === selectedLayerIdx);
+    if (!lw) return;
+    const { entry } = lw;
+    const oid0 = entry.selectedIds[0];
+    entry.layer.queryFeatures({
+      where: `OBJECTID = ${oid0}`,
+      outFields: [selectedField]
+    })
+    .then(res => {
+      let raw = res.features[0]?.attributes[selectedField];
+      let formatted = "";
+      if (raw != null) {
+        if (typeof raw === "number") {
+          const d = new Date(raw);
+          if (!isNaN(d)) formatted = d.toISOString().slice(0,10);
+        } else {
+          const d = new Date(raw);
+          formatted = !isNaN(d) ? d.toISOString().slice(0,10) : String(raw).slice(0,10);
+        }
+      }
+      setDateValue(formatted);
+    })
+    .catch(() => setDateValue(""));
+  }, [selectedField, selectedLayerIdx, layersWithSel]);
 
   // 6) Pre‑llenado de dateValue
   useEffect(() => {

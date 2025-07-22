@@ -62,101 +62,142 @@ const AppContainer = () => {
     );
 
    async function handleBatchEditApply(
-  layerIndex,     // índice en el array `layers`
-  fieldName,      // p.ej. "Fecha ET03"
-  newValueRaw     // "YYYY-MM-DD"
+  layerIndex,    // índice en el array `layers`
+  fieldName,     // p.ej. "Fecha ET03"
+  newValueRaw    // "YYYY-MM-DD"
 ) {
+  // --- 1) Entrada y validaciones iniciales ---
   const entry = layers[layerIndex];
-  if (!entry) { alert("Capa no encontrada"); return; }
+  if (!entry) {
+    window.alert("Error interno: capa no encontrada.");
+    return;
+  }
   const { layer, selectedIds } = entry;
-  if (!selectedIds.length) { alert("Nada seleccionado"); return; }
+  if (!selectedIds?.length) {
+    window.alert("No hay features seleccionadas en la capa.");
+    setBatchEditOpen(false);
+    return;
+  }
 
-  // extraer número ETnn
+  // --- 2) Extraer número de etapa (ETnn) ---
   const m = fieldName.match(/ET\s*0*?(\d+)$/i);
-  const selNum = m ? +m[1] : null;
-  if (selNum == null) { alert("Campo inválido"); return; }
+  const selNum = m ? parseInt(m[1], 10) : null;
+  if (selNum == null) {
+    window.alert(`Nombre de campo inválido: ${fieldName}`);
+    return;
+  }
 
-  // armar lista de campos Fecha ET ≤ selNum
+  // --- 3) Listar todos los campos "Fecha ETnn" <= etapa seleccionada ---
   const allFecha = layer.fields
     .filter(f => {
-      const t = f.name.match(/^Fecha\s*ET\s*0*?(\d+)$/i);
-      return t && +t[1] <= selNum;
+      const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
+      return t && parseInt(t[1],10) <= selNum;
     })
     .map(f => ({
       name: f.name,
       type: f.type,
-      num: +f.name.match(/\d+$/)[0]
+      num: parseInt(f.name.match(/\d+$/)[0], 10)
     }));
-  if (!allFecha.length) { alert("No hay campos Fecha ET"); return; }
-
-  // validar input
-  if (!newValueRaw) { alert("Fecha vacía"); return; }
-  const d = new Date(newValueRaw);
-  if (isNaN(d)) { alert("Formato fecha inválido"); return; }
-  const epoch = d.getTime();
-
-  // leer antes
-  const where = selectedIds.map(id => `OBJECTID=${id}`).join(" OR ");
-  const q = layer.createQuery();
-  q.where = where;
-  q.outFields = allFecha.map(f => f.name);
-  const res = await layer.queryFeatures(q);
-  const before = {};
-  res.features.forEach(feat => {
-    before[feat.attributes.OBJECTID] = feat.attributes;
-  });
-
-  // armar updates
-  const updates = selectedIds.map(oid => {
-    const prev = before[oid] || {};
-    const attrs = { OBJECTID: oid };
-
-    for (const f of allFecha) {
-      const key = f.name;
-      const had = prev[key];
-      const nonEmpty = had != null && String(had).trim() !== "";
-
-      if (f.num === selNum) {
-        // siempre sobreescribe seleccionada
-        attrs[key] = f.type === "date" ? epoch : newValueRaw;
-      }
-      else if (!nonEmpty) {
-        // back‑fill sólo si estaba vacío
-        attrs[key] = f.type === "date" ? epoch : newValueRaw;
-      }
-    }
-
-    return Object.keys(attrs).length > 1 ? { attributes: attrs } : null;
-  }).filter(u => u);
-
-  if (!updates.length) {
-    alert("No hay campos vacíos ni seleccionada para actualizar.");
+  if (!allFecha.length) {
+    window.alert("No se encontraron campos Fecha ET.");
     return;
   }
 
-  // applyEdits
+  // --- 4) Validar la nueva fecha ---
+  if (!newValueRaw) {
+    window.alert("Selecciona una fecha.");
+    return;
+  }
+  const d = new Date(newValueRaw);
+  if (isNaN(d)) {
+    window.alert("Formato de fecha inválido.");
+    return;
+  }
+  const epoch = d.getTime();
+
+  // --- 5) Leer valores actuales ---
+  const where = selectedIds.map(id => `OBJECTID = ${id}`).join(" OR ");
+  const q = layer.createQuery();
+  q.where = where;
+  q.outFields = ["*"]; // todos los campos
+  q.returnGeometry = false;
+  const res = await layer.queryFeatures(q);
+  const beforeMap = {};
+  res.features.forEach(feat => {
+    beforeMap[feat.attributes.OBJECTID] = feat.attributes;
+  });
+  console.log("ANTES de editar (map):", beforeMap);
+
+  // --- 6) Preparar updates respetando la lógica ---
+  const updates = selectedIds
+    .map(oid => {
+      const prev = beforeMap[oid] || {};
+      const attrs = { OBJECTID: oid };
+
+      allFecha.forEach(f => {
+        // ¿Tenía valor previo?
+        const had = prev[f.name];
+        const nonEmpty = had != null && String(had).trim() !== "";
+
+        if (f.num === selNum) {
+          // ❗ Siempre sobreescribo la etapa seleccionada
+          attrs[f.name] = f.type === "date" ? epoch : newValueRaw;
+        } else if (!nonEmpty) {
+          // ✅ Relleno solo si estaba vacío
+          attrs[f.name] = f.type === "date" ? epoch : newValueRaw;
+        }
+
+        console.log(
+          `OID ${oid} – campo ${f.name} – prev=`,
+          had,
+          "nonEmpty?",
+          nonEmpty,
+          "overwrite selected?",
+          f.num === selNum
+        );
+      });
+
+      return Object.keys(attrs).length > 1 ? { attributes: attrs } : null;
+    })
+    .filter(u => u);
+
+  if (!updates.length) {
+    window.alert("No hay campos vacíos ni seleccionada para actualizar.");
+    return;
+  }
+  console.log("Updates a aplicar:", updates);
+
+  // --- 7) Ejecutar edits ---
   const result = await layer.applyEdits({ updateFeatures: updates });
   if (result.updateFeaturesResults) {
     const fails = result.updateFeaturesResults.filter(r => !r.success);
-    if (fails.length) alert("Algunas no se actualizaron");
+    if (fails.length) {
+      console.error("Errores al actualizar:", fails);
+      window.alert("Algunas entidades no pudieron actualizarse.");
+    }
   }
 
-  // redraw + popup
+  // --- 8) Forzar redraw y refrescar popup si está abierto ---
   const view = viewRef.current;
   if (view?.requestRender) view.requestRender();
   else { layer.visible = false; layer.visible = true; }
   if (view?.popup.open) {
-    const sel = view.popup.selectedFeature;
-    if (sel && selectedIds.includes(sel.attributes.OBJECTID)) {
+    const selFeat = view.popup.selectedFeature;
+    if (selFeat && selectedIds.includes(selFeat.attributes.OBJECTID)) {
       const loc = view.popup.location;
       view.popup.close();
-      view.popup.open({ features: [sel], location: loc });
+      view.popup.open({ features: [selFeat], location: loc });
     }
   }
 
-  alert(`Actualizadas ${updates.length} entidad(es).`);
+  // --- 9) Aviso al usuario ---
+  window.alert(
+    `Se actualizaron ${updates.length} feature(s) en "${entry.name}".`
+  );
   setBatchEditOpen(false);
 }
+
+
 
 
 
@@ -252,38 +293,38 @@ const AppContainer = () => {
     // Genera un color distintivo según índice
     const generateColorForIndex = (index) => {
         // Cada estado avanza 20° en el espectro HSL desde 10° hasta 120°
-    // (Si pasamos 120°, nos mantenemos en verde)
-    const startHue = 10;
-    const step = 20;
-    const hue = Math.min(startHue + index * step, 120);
+        // (Si pasamos 120°, nos mantenemos en verde)
+        const startHue = 10;
+        const step = 20;
+        const hue = Math.min(startHue + index * step, 120);
 
-    const saturation = 90; // saturación alta para colores vivos
-    const lightness = 45;  // contraste bueno
+        const saturation = 90; // saturación alta para colores vivos
+        const lightness = 45;  // contraste bueno
 
-    // Convertimos HSL a RGB
-    const h = hue / 360;
-    const s = saturation / 100;
-    const l = lightness / 100;
+        // Convertimos HSL a RGB
+        const h = hue / 360;
+        const s = saturation / 100;
+        const l = lightness / 100;
 
-    let r, g, b;
-    if (s === 0) {
-        r = g = b = l;
-    } else {
-        const hue2rgb = (p, q, t) => {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1 / 6) return p + (q - p) * 6 * t;
-            if (t < 1 / 2) return q;
-            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-            return p;
-        };
-        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-        const p = 2 * l - q;
-        r = hue2rgb(p, q, h + 1 / 3);
-        g = hue2rgb(p, q, h);
-        b = hue2rgb(p, q, h - 1 / 3);
-    }
-    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+        let r, g, b;
+        if (s === 0) {
+            r = g = b = l;
+        } else {
+            const hue2rgb = (p, q, t) => {
+                if (t < 0) t += 1;
+                if (t > 1) t -= 1;
+                if (t < 1 / 6) return p + (q - p) * 6 * t;
+                if (t < 1 / 2) return q;
+                if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+                return p;
+            };
+            const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+            const p = 2 * l - q;
+            r = hue2rgb(p, q, h + 1 / 3);
+            g = hue2rgb(p, q, h);
+            b = hue2rgb(p, q, h - 1 / 3);
+        }
+        return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
     };
 
     // Carga shp-write UMD desde CDN (window.shpwrite)
@@ -299,360 +340,355 @@ const AppContainer = () => {
     };
 
     // ----- Manejador de apertura de archivo (shapefile ZIP) -----
-const handleFileOpen = async (file) => {
-  const view = viewRef.current;
-  if (!file || !view) return;
+    const handleFileOpen = async (file) => {
+        const view = viewRef.current;
+        if (!file || !view) return;
 
-  const newId = layerIdRef.current++;
-  const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-  if (layersRef.current.some((e) => e.name === nameWithoutExt)) {
-    window.alert("No puedes cargar dos veces la misma capa");
-    return;
-  }
+        const newId = layerIdRef.current++;
+        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
+        if (layersRef.current.some((e) => e.name === nameWithoutExt)) {
+            window.alert("No puedes cargar dos veces la misma capa");
+            return;
+        }
 
-  setLoading(true);
-  setProgress(0);
-  setProgressCurrent(0);
-  setProgressTotal(0);
+        setLoading(true);
+        setProgress(0);
+        setProgressCurrent(0);
+        setProgressTotal(0);
 
-  try {
-    setLoadingMessage("Descomprimiendo archivo ZIP ");
-    const arrayBuffer = await file.arrayBuffer();
-    const zip = await JSZip.loadAsync(arrayBuffer);
+        try {
+            setLoadingMessage("Descomprimiendo archivo ZIP ");
+            const arrayBuffer = await file.arrayBuffer();
+            const zip = await JSZip.loadAsync(arrayBuffer);
 
-    setLoadingMessage("Leyendo archivos ");
-    const fileNames = Object.keys(zip.files);
-    const hasPrj = fileNames.some((name) =>
-      name.toLowerCase().endsWith(".prj")
-    );
-    if (!hasPrj) {
-      window.alert(
-        "No se puede mostrar una capa no geolocalizada junto a las localizadas"
-      );
-      setLoading(false);
-      return;
-    }
-
-    setLoadingMessage("Parseando shapefile y construyendo features ");
-    const geojson = await shpjs(arrayBuffer);
-    if (!geojson || !geojson.features?.length) {
-      console.warn("No valid features found in shapefile:", file.name);
-      setLoading(false);
-      return;
-    }
-
-    const [r, g, b] = generateColorForIndex(newId);
-
-    // --- Detectar campos de fecha dinámicamente ---
-// --- Detectar campos de fecha dinámicamente ---
-// --- Función para validar fecha ---
-function esFechaValida(val) {
-  if (val instanceof Date) {
-    return val.getFullYear() >= 1900;
-  }
-  if (typeof val === "string" && val.trim() !== "") {
-    const d = new Date(val);
-    return !isNaN(d) && d.getFullYear() >= 1900;
-  }
-  return false;
-}
-
-// --- Inicializar sets ---
-const fechaCamposSet = new Set();
-const etapaCamposSet = new Set();
-const estadosSet = new Set();
-
-// --- Recorrer features una sola vez ---
-geojson.features.forEach((feature) => {
-  const props = feature.properties;
-
-  Object.keys(props).forEach((key) => {
-    if (key.startsWith("Fecha ")) fechaCamposSet.add(key);
-    if (key.startsWith("Etapa ")) etapaCamposSet.add(key);
-  });
-});
-
-// --- Ordenar campos ---
-const sortByNum = (a, b) => {
-  const numA = parseInt(a.match(/\d+/)?.[0] ?? "0");
-  const numB = parseInt(b.match(/\d+/)?.[0] ?? "0");
-  return numA - numB;
-};
-
-const fechaCampos = Array.from(fechaCamposSet).sort(sortByNum);
-const etapaCampos = Array.from(etapaCamposSet).sort(sortByNum);
-
-console.log("fechaCampos:", fechaCampos);
-console.log("etapaCampos:", etapaCampos);
-
-// --- Función para detectar estado principal ---
-function detectarEstado(feature) {
-  for (let i = fechaCampos.length - 1; i >= 0; i--) {
-    const fechaCampo = fechaCampos[i];
-    const fechaVal = feature.properties[fechaCampo];
-    if (!esFechaValida(fechaVal)) continue;
-
-    const etapaNumero = parseInt(fechaCampo.match(/\d+/)?.[0], 10);
-    if (!etapaNumero) return "Sin estado";
-
-    const etapaCampo = `Etapa ${etapaNumero.toString().padStart(2, "0")}`;
-    const estadoVal = feature.properties[etapaCampo];
-
-    return estadoVal && estadoVal.trim() !== "" ? estadoVal.trim() : "Sin estado";
-  }
-  return "Sin estado";
-}
-
-// --- Recopilar estados ---
-geojson.features.forEach((f) => {
-  estadosSet.add(detectarEstado(f));
-  etapaCampos.forEach((campo) => {
-    const val = f.properties[campo];
-    if (val && val.trim() !== "") estadosSet.add(val.trim());
-  });
-});
-
-console.log("estadosSet:", estadosSet);
-
-// --- Ordenar estados ---
-// Creamos una lista de estados en el orden en que aparecen las etapas
-const ordenDinamico = [];
-etapaCampos.forEach((campo) => {
-  geojson.features.forEach((f) => {
-    const val = f.properties[campo];
-    if (val && !ordenDinamico.includes(val)) {
-      ordenDinamico.push(val);
-    }
-  });
-});
-
-// Añadimos "Sin estado" al final si no está
-if (!ordenDinamico.includes("Sin estado")) {
-  ordenDinamico.push("Sin estado");
-}
-
-const estadosUnicos = Array.from(estadosSet).sort((a, b) => {
-  const indexA = ordenDinamico.indexOf(a);
-  const indexB = ordenDinamico.indexOf(b);
-
-  if (indexA === -1 && indexB === -1) return a.localeCompare(b, "es");
-  if (indexA === -1) return 1;
-  if (indexB === -1) return -1;
-
-  return indexA - indexB;
-});
-
-console.log("estadosUnicos:", estadosUnicos);
-
-
-    // --- Crear campos dinámicos ---
-    const firstProps = geojson.features[0]?.properties || {};
-    const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
-      let type;
-      if (typeof value === "number") type = "double";
-      else if (typeof value === "boolean") type = "boolean";
-      else if (value instanceof Date) type = "date";
-      else type = "string";
-      return { name: key, alias: key, type };
-    });
-    dynamicFields.push({
-      name: "estadoActual",
-      alias: "Estado Actual",
-      type: "string",
-    });
-
-    // --- Asignar colores ---
-    const estadoAColor = {};
-    estadosUnicos.forEach((estado, i) => {
-      if (estado === "Sin estado") {
-        estadoAColor[estado] = [255, 255, 255, 0.5];
-      } else {
-        const baseColor = generateColorForIndex(i);
-        estadoAColor[estado] = [...baseColor, 0.5]; // semitransparente
-      }
-    });
-    console.log("Colores asignados en handleFileOpen:", estadoAColor);
-    // --- Detectar tipo de geometría ---
-    const geomType0 = geojson.features[0]?.geometry?.type;
-    let geometryType = "polygon";
-    if (geomType0 === "Point") geometryType = "point";
-    else if (geomType0 === "LineString" || geomType0 === "MultiLineString")
-      geometryType = "polyline";
-
-    // --- Construir uniqueValueInfos ---
-    const uniqueValueInfos = estadosUnicos.map((estado) => {
-      let symbol;
-      if (estado === "Sin estado") {
-        // borde negro, sin relleno
-        symbol =
-          geometryType === "point"
-            ? {
-                type: "simple-marker",
-                size: "8px",
-                style: "circle",
-                color: [0, 0, 0, 0],
-                outline: { color: [0, 0, 0, 1], width: 1 },
-              }
-            : geometryType === "polyline"
-            ? { type: "simple-line", color: [0, 0, 0, 1], width: 2 }
-            : {
-                type: "simple-fill",
-                color: [0, 0, 0, 0],
-                outline: { color: [0, 0, 0, 1], width: 2 },
-              };
-      } else {
-        const baseColor = estadoAColor[estado];
-        const borderColor = baseColor
-          ? [baseColor[0], baseColor[1], baseColor[2], 1]
-          : [0, 0, 0, 1];
-        symbol =
-          geometryType === "point"
-            ? {
-                type: "simple-marker",
-                size: "8px",
-                style: "circle",
-                color: baseColor,
-                outline: { color: borderColor, width: 1 },
-              }
-            : geometryType === "polyline"
-            ? { type: "simple-line", color: borderColor, width: 2 }
-            : {
-                type: "simple-fill",
-                color: baseColor,
-                outline: { color: borderColor, width: 2 },
-              };
-      }
-      return { value: estado, symbol, label: estado };
-    });
-    // --- Crear FeatureLayer ---
-    const featureLayer = new FeatureLayer({
-      source: [],
-      objectIdField: "OBJECTID",
-      geometryType,
-      spatialReference: { wkid: 4326 },
-      fields: [...dynamicFields],
-      renderer: {
-        type: "unique-value",
-        field: "estadoActual",
-        defaultSymbol:
-          geometryType === "point"
-            ? {
-                type: "simple-marker",
-                size: "8px",
-                style: "circle",
-                color: [0, 0, 0, 0],
-                outline: { color: [0, 0, 0, 1], width: 1 },
-              }
-            : geometryType === "polyline"
-            ? { type: "simple-line", color: [0, 0, 0, 1], width: 2 }
-            : {
-                type: "simple-fill",
-                color: [0, 0, 0, 0],
-                outline: { color: [0, 0, 0, 1], width: 2 },
-              },
-        uniqueValueInfos,
-      },
-      popupTemplate: {
-        title: `${nameWithoutExt} - ID:` + "{fid}",
-        content: [
-          {
-            type: "fields",
-            fieldInfos: dynamicFields.map((f) => ({
-              fieldName: f.name,
-              label: f.alias,
-            })),
-          },
-        ],
-      },
-    });
-    setLoadingMessage("Agregando features al mapa ");
-    view.map.add(featureLayer);
-    await featureLayer.when();
-
-    const batchSize = 1000;
-    const allFeatures = geojson.features;
-    const total = allFeatures.length;
-
-    setProgress(0);
-    setProgressCurrent(0);
-    setProgressTotal(total);
-
-    let objectIdCounter = 0;
-
-    for (let i = 0; i < total; i += batchSize) {
-      const batch = allFeatures.slice(i, i + batchSize)
-        .map((f) => {
-          const geometry = convertGeometry(f.geometry);
-          if (!geometry) return null;
-
-          const propsRaw = f.properties || {};
-          const propsClean = {};
-          Object.entries(propsRaw).forEach(([key, value]) => {
-            if (value instanceof Date) {
-              const yr = value.getFullYear();
-              propsClean[key] = yr < 1900 ? null : value;
-            } else {
-              propsClean[key] = value;
+            setLoadingMessage("Leyendo archivos ");
+            const fileNames = Object.keys(zip.files);
+            const hasPrj = fileNames.some((name) =>
+                name.toLowerCase().endsWith(".prj")
+            );
+            if (!hasPrj) {
+                window.alert(
+                    "No se puede mostrar una capa no geolocalizada junto a las localizadas"
+                );
+                setLoading(false);
+                return;
             }
-          });
 
-          // Asignar estadoActual
-          propsClean.estadoActual = detectarEstado(f);
+            setLoadingMessage("Parseando shapefile y construyendo features ");
+            const geojson = await shpjs(arrayBuffer);
+            if (!geojson || !geojson.features?.length) {
+                console.warn("No valid features found in shapefile:", file.name);
+                setLoading(false);
+                return;
+            }
 
-          return {
-            geometry,
-            attributes: { OBJECTID: objectIdCounter++, ...propsClean },
-          };
-        })
-        .filter(Boolean);
+            const [r, g, b] = generateColorForIndex(newId);
 
-      if (batch.length > 0) {
-        await featureLayer.applyEdits({ addFeatures: batch });
-      }
+            // --- Detectar campos de fecha dinámicamente ---
+            // --- Detectar campos de fecha dinámicamente ---
+            // --- Función para validar fecha ---
+            function esFechaValida(val) {
+                if (val instanceof Date) {
+                    return val.getFullYear() >= 1900;
+                }
+                if (typeof val === "string" && val.trim() !== "") {
+                    const d = new Date(val);
+                    return !isNaN(d) && d.getFullYear() >= 1900;
+                }
+                return false;
+            }
 
-      // Progreso
-      setProgressCurrent((prev) => {
-        const current = Math.min(prev + batch.length, total);
-        setProgress((current / total) * 100);
-        return current;
-      });
+            // --- Inicializar sets ---
+            const fechaCamposSet = new Set();
+            const etapaCamposSet = new Set();
+            const estadosSet = new Set();
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+            // --- Recorrer features una sola vez ---
+            geojson.features.forEach((feature) => {
+                const props = feature.properties;
 
-    const extentResult = await featureLayer.queryExtent();
-    if (extentResult?.extent) {
-      await view.goTo({ target: extentResult.extent, padding: 50 });
-    }
-    const layerView = await view.whenLayerView(featureLayer);
+                Object.keys(props).forEach((key) => {
+                    if (key.startsWith("Fecha ")) fechaCamposSet.add(key);
+                    if (key.startsWith("Etapa ")) etapaCamposSet.add(key);
+                });
+            });
 
-    const newEntry = {
-        id: newId,
-        name: nameWithoutExt || `Layer ${newId}`,
-        layer: featureLayer,
-        layerView,
-        visible: true,
-        highlightHandle: null,
-        selectedIds: [],
-        extent: extentResult?.extent || null,
-        uniqueValueInfos,
-        estados: estadosUnicos,
-        stateColors: estadoAColor,  
+            // --- Ordenar campos ---
+            const sortByNum = (a, b) => {
+                const numA = parseInt(a.match(/\d+/)?.[0] ?? "0");
+                const numB = parseInt(b.match(/\d+/)?.[0] ?? "0");
+                return numA - numB;
+            };
+
+            const fechaCampos = Array.from(fechaCamposSet).sort(sortByNum);
+            const etapaCampos = Array.from(etapaCamposSet).sort(sortByNum);
+
+
+            // --- Función para detectar estado principal ---
+            function detectarEstado(feature) {
+                for (let i = fechaCampos.length - 1; i >= 0; i--) {
+                    const fechaCampo = fechaCampos[i];
+                    const fechaVal = feature.properties[fechaCampo];
+                    if (!esFechaValida(fechaVal)) continue;
+
+                    const etapaNumero = parseInt(fechaCampo.match(/\d+/)?.[0], 10);
+                    if (!etapaNumero) return "Sin estado";
+
+                    const etapaCampo = `Etapa ${etapaNumero.toString().padStart(2, "0")}`;
+                    const estadoVal = feature.properties[etapaCampo];
+
+                    return estadoVal && estadoVal.trim() !== "" ? estadoVal.trim() : "Sin estado";
+                }
+                return "Sin estado";
+            }
+
+            // --- Recopilar estados ---
+            geojson.features.forEach((f) => {
+                estadosSet.add(detectarEstado(f));
+                etapaCampos.forEach((campo) => {
+                    const val = f.properties[campo];
+                    if (val && val.trim() !== "") estadosSet.add(val.trim());
+                });
+            });
+
+
+            // --- Ordenar estados ---
+            // Creamos una lista de estados en el orden en que aparecen las etapas
+            const ordenDinamico = [];
+            etapaCampos.forEach((campo) => {
+                geojson.features.forEach((f) => {
+                    const val = f.properties[campo];
+                    if (val && !ordenDinamico.includes(val)) {
+                        ordenDinamico.push(val);
+                    }
+                });
+            });
+
+            // Añadimos "Sin estado" al final si no está
+            if (!ordenDinamico.includes("Sin estado")) {
+                ordenDinamico.push("Sin estado");
+            }
+
+            const estadosUnicos = Array.from(estadosSet).sort((a, b) => {
+                const indexA = ordenDinamico.indexOf(a);
+                const indexB = ordenDinamico.indexOf(b);
+
+                if (indexA === -1 && indexB === -1) return a.localeCompare(b, "es");
+                if (indexA === -1) return 1;
+                if (indexB === -1) return -1;
+
+                return indexA - indexB;
+            });
+
+
+
+            // --- Crear campos dinámicos ---
+            const firstProps = geojson.features[0]?.properties || {};
+            const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
+                let type;
+                if (typeof value === "number") type = "double";
+                else if (typeof value === "boolean") type = "boolean";
+                else if (value instanceof Date) type = "date";
+                else type = "string";
+                return { name: key, alias: key, type };
+            });
+            dynamicFields.push({
+                name: "estadoActual",
+                alias: "Estado Actual",
+                type: "string",
+            });
+
+            // --- Asignar colores ---
+            const estadoAColor = {};
+            estadosUnicos.forEach((estado, i) => {
+                if (estado === "Sin estado") {
+                    estadoAColor[estado] = [255, 255, 255, 0.5];
+                } else {
+                    const baseColor = generateColorForIndex(i);
+                    estadoAColor[estado] = [...baseColor, 0.5]; // semitransparente
+                }
+            });
+            // --- Detectar tipo de geometría ---
+            const geomType0 = geojson.features[0]?.geometry?.type;
+            let geometryType = "polygon";
+            if (geomType0 === "Point") geometryType = "point";
+            else if (geomType0 === "LineString" || geomType0 === "MultiLineString")
+                geometryType = "polyline";
+
+            // --- Construir uniqueValueInfos ---
+            const uniqueValueInfos = estadosUnicos.map((estado) => {
+                let symbol;
+                if (estado === "Sin estado") {
+                    // borde negro, sin relleno
+                    symbol =
+                        geometryType === "point"
+                            ? {
+                                type: "simple-marker",
+                                size: "8px",
+                                style: "circle",
+                                color: [0, 0, 0, 0],
+                                outline: { color: [0, 0, 0, 1], width: 1 },
+                            }
+                            : geometryType === "polyline"
+                                ? { type: "simple-line", color: [0, 0, 0, 1], width: 2 }
+                                : {
+                                    type: "simple-fill",
+                                    color: [0, 0, 0, 0],
+                                    outline: { color: [0, 0, 0, 1], width: 2 },
+                                };
+                } else {
+                    const baseColor = estadoAColor[estado];
+                    const borderColor = baseColor
+                        ? [baseColor[0], baseColor[1], baseColor[2], 1]
+                        : [0, 0, 0, 1];
+                    symbol =
+                        geometryType === "point"
+                            ? {
+                                type: "simple-marker",
+                                size: "8px",
+                                style: "circle",
+                                color: baseColor,
+                                outline: { color: borderColor, width: 1 },
+                            }
+                            : geometryType === "polyline"
+                                ? { type: "simple-line", color: borderColor, width: 2 }
+                                : {
+                                    type: "simple-fill",
+                                    color: baseColor,
+                                    outline: { color: borderColor, width: 2 },
+                                };
+                }
+                return { value: estado, symbol, label: estado };
+            });
+            // --- Crear FeatureLayer ---
+            const featureLayer = new FeatureLayer({
+                source: [],
+                objectIdField: "OBJECTID",
+                geometryType,
+                spatialReference: { wkid: 4326 },
+                fields: [...dynamicFields],
+                renderer: {
+                    type: "unique-value",
+                    field: "estadoActual",
+                    defaultSymbol:
+                        geometryType === "point"
+                            ? {
+                                type: "simple-marker",
+                                size: "8px",
+                                style: "circle",
+                                color: [0, 0, 0, 0],
+                                outline: { color: [0, 0, 0, 1], width: 1 },
+                            }
+                            : geometryType === "polyline"
+                                ? { type: "simple-line", color: [0, 0, 0, 1], width: 2 }
+                                : {
+                                    type: "simple-fill",
+                                    color: [0, 0, 0, 0],
+                                    outline: { color: [0, 0, 0, 1], width: 2 },
+                                },
+                    uniqueValueInfos,
+                },
+                popupTemplate: {
+                    title: `${nameWithoutExt} - ID:` + "{fid}",
+                    content: [
+                        {
+                            type: "fields",
+                            fieldInfos: dynamicFields.map((f) => ({
+                                fieldName: f.name,
+                                label: f.alias,
+                            })),
+                        },
+                    ],
+                },
+            });
+            setLoadingMessage("Agregando features al mapa ");
+            view.map.add(featureLayer);
+            await featureLayer.when();
+
+            const batchSize = 1000;
+            const allFeatures = geojson.features;
+            const total = allFeatures.length;
+
+            setProgress(0);
+            setProgressCurrent(0);
+            setProgressTotal(total);
+
+            let objectIdCounter = 0;
+
+            for (let i = 0; i < total; i += batchSize) {
+                const batch = allFeatures.slice(i, i + batchSize)
+                    .map((f) => {
+                        const geometry = convertGeometry(f.geometry);
+                        if (!geometry) return null;
+
+                        const propsRaw = f.properties || {};
+                        const propsClean = {};
+                        Object.entries(propsRaw).forEach(([key, value]) => {
+                            if (value instanceof Date) {
+                                const yr = value.getFullYear();
+                                propsClean[key] = yr < 1900 ? null : value;
+                            } else {
+                                propsClean[key] = value;
+                            }
+                        });
+
+                        // Asignar estadoActual
+                        propsClean.estadoActual = detectarEstado(f);
+
+                        return {
+                            geometry,
+                            attributes: { OBJECTID: objectIdCounter++, ...propsClean },
+                        };
+                    })
+                    .filter(Boolean);
+
+                if (batch.length > 0) {
+                    await featureLayer.applyEdits({ addFeatures: batch });
+                }
+
+                // Progreso
+                setProgressCurrent((prev) => {
+                    const current = Math.min(prev + batch.length, total);
+                    setProgress((current / total) * 100);
+                    return current;
+                });
+
+                await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+
+            const extentResult = await featureLayer.queryExtent();
+            if (extentResult?.extent) {
+                await view.goTo({ target: extentResult.extent, padding: 50 });
+            }
+            const layerView = await view.whenLayerView(featureLayer);
+
+            const newEntry = {
+                id: newId,
+                name: nameWithoutExt || `Layer ${newId}`,
+                layer: featureLayer,
+                layerView,
+                visible: true,
+                highlightHandle: null,
+                selectedIds: [],
+                extent: extentResult?.extent || null,
+                uniqueValueInfos,
+                estados: estadosUnicos,
+                stateColors: estadoAColor,
+            };
+            setStateColors(estadoAColor);
+            setLayers((prev) => [...prev, newEntry]);
+
+        } catch (err) {
+            console.error("Error procesando shapefile:", file.name, err);
+            window.alert("Error al procesar shapefile: " + err.message);
+        } finally {
+            setLoading(false);
+            setProgress(0);
+            setProgressCurrent(0);
+            setProgressTotal(0);
+            setLoadingMessage("");
+        }
     };
-    setStateColors(estadoAColor);
-    setLayers((prev) => [...prev, newEntry]);
-
-  } catch (err) {
-    console.error("Error procesando shapefile:", file.name, err);
-    window.alert("Error al procesar shapefile: " + err.message);
-  } finally {
-    setLoading(false);
-    setProgress(0);
-    setProgressCurrent(0);
-    setProgressTotal(0);
-    setLoadingMessage("");
-  }
-};
 
 
 
@@ -671,24 +707,6 @@ console.log("estadosUnicos:", estadosUnicos);
         setLoading(false);
     };
 
-    const arcgisToGeoJSON = (geometry) => {
-        if (!geometry || !geometry.type) return null;
-        switch (geometry.type) {
-            case "point":
-                return { type: "Point", coordinates: [geometry.x, geometry.y] };
-            case "polyline":
-                // Si paths tiene varias rutas, producimos MultiLineString
-                if (geometry.paths.length === 1) {
-                    return { type: "LineString", coordinates: geometry.paths[0] };
-                } else {
-                    return { type: "MultiLineString", coordinates: geometry.paths };
-                }
-            case "polygon":
-                return { type: "Polygon", coordinates: geometry.rings };
-            default:
-                return null;
-        }
-    };
 
     const exportLayerAsShapefile = async (entry) => {
         const { layer, name } = entry;
@@ -697,28 +715,27 @@ console.log("estadosUnicos:", estadosUnicos);
             return;
         }
 
-  try {
-    setLoadingMessage("Consultando entidades...");
-    setProgress(0);
+        try {
+            setLoadingMessage("Consultando entidades...");
+            setProgress(0);
 
-    // 1. Consultar features
-    const query = layer.createQuery();
-    query.where = "1=1";
-    query.returnGeometry = true;
-    query.outFields = ["*"];
-    const result = await layer.queryFeatures(query);
-    console.log("Features consultadas:", result.features.length);
+            // 1. Consultar features
+            const query = layer.createQuery();
+            query.where = "1=1";
+            query.returnGeometry = true;
+            query.outFields = ["*"];
+            const result = await layer.queryFeatures(query);
 
-    // 2. Construir GeoJSON
-    setLoadingMessage("Construyendo GeoJSON...");
-    const geojson = {
-      type: "FeatureCollection",
-      features: result.features
-        .map((f) => {
-          let geom = f.geometry;
-          if (geom.spatialReference?.isWebMercator) {
-            geom = webMercatorToGeographic(geom);
-          }
+            // 2. Construir GeoJSON
+            setLoadingMessage("Construyendo GeoJSON...");
+            const geojson = {
+                type: "FeatureCollection",
+                features: result.features
+                    .map((f) => {
+                        let geom = f.geometry;
+                        if (geom.spatialReference?.isWebMercator) {
+                            geom = webMercatorToGeographic(geom);
+                        }
 
                         let geometry = null;
                         switch (geom.type) {
@@ -751,26 +768,25 @@ console.log("estadosUnicos:", estadosUnicos);
                 return;
             }
 
-    console.log("Iniciando generación de shapefile...");
-    // 3. Generar ZIP
-    setLoadingMessage("Generando archivo ZIP...");
-    const worker = new ExportWorker();
-    const zipBlob = await new Promise((resolve, reject) => {
-      worker.onmessage = (e) => {
-        const { type, blob, message } = e.data;
-        
-        if (type === "done" && blob) {
-          console.log("ZIP recibido del worker, tamaño:", blob.size);
-          if (blob.size < 100) {
-            reject(new Error("Archivo generado demasiado pequeño"));
-          } else {
-            resolve(blob);
-          }
-        } else {
-          reject(new Error(message || "Error en el worker"));
-        }
-        worker.terminate();
-      };
+            // 3. Generar ZIP
+            setLoadingMessage("Generando archivo ZIP...");
+            const worker = new ExportWorker();
+            const zipBlob = await new Promise((resolve, reject) => {
+                worker.onmessage = (e) => {
+                    const { type, blob, message } = e.data;
+
+                    if (type === "done" && blob) {
+                        console.log("ZIP recibido del worker, tamaño:", blob.size);
+                        if (blob.size < 100) {
+                            reject(new Error("Archivo generado demasiado pequeño"));
+                        } else {
+                            resolve(blob);
+                        }
+                    } else {
+                        reject(new Error(message || "Error en el worker"));
+                    }
+                    worker.terminate();
+                };
 
                 worker.onerror = (err) => {
                     console.error("Error en worker:", err);
@@ -781,74 +797,72 @@ console.log("estadosUnicos:", estadosUnicos);
                 worker.postMessage({ geojson });
             });
 
-    // 4. Guardar el archivo
-    const fileName = `${name.replace(/[^a-z0-9]/gi, '_')}.zip`;
-    
-    if (window.cordova?.plugins?.safMediastore) {
-      // Android
-      setLoadingMessage("Convirtiendo a base64...");
-      setProgress(0);
-      setProgressCurrent(0);
-      setProgressTotal(zipBlob.size);
-      const base64 = await blobToBase64(zipBlob, (percent, loaded, total) => {
-        setProgress(percent);
-        setProgressCurrent(loaded);
-        setProgressTotal(total);
-      });
-      setLoadingMessage("Guardando archivo...");
-      await window.cordova.plugins.safMediastore.writeFile({
-        data: base64,
-        filename: fileName,
-        mimeType: "application/zip"
-      });
-      alert("Shapefile guardado correctamente");
-    } else {
-      // Navegador: simula progreso de guardado
-      setLoadingMessage("Guardando archivo...");
-      for (let i = 1; i <= 100; i += 10) {
-        setProgress(i);
-        setProgressCurrent(i);
-        setProgressTotal(100);
-        await new Promise((r) => setTimeout(r, 10));
-      }
-      saveAs(zipBlob, fileName);
-      setProgress(100);
-      setProgressCurrent(100);
-      setProgressTotal(100);
-    }
+            // 4. Guardar el archivo
+            const fileName = `${name.replace(/[^a-z0-9]/gi, '_')}.zip`;
 
-  } catch (err) {
-    console.error("Error en exportLayerAsShapefile:", err);
-    alert(`Error al exportar: ${err.message}`);
-  }
-  finally {
-    setTimeout(() => {
-      setLoading(false);
-      setLoadingMessage("");
-      setProgress(0);
-      setProgressCurrent(0);
-      setProgressTotal(0);
-    }, 500); //se fija en 500 para que de tiempo a ver el 100%
-    }
-};
+            if (window.cordova?.plugins?.safMediastore) {
+                // Android
+                setLoadingMessage("Convirtiendo a base64...");
+                setProgress(0);
+                setProgressCurrent(0);
+                setProgressTotal(zipBlob.size);
+                const base64 = await blobToBase64(zipBlob, (percent, loaded, total) => {
+                    setProgress(percent);
+                    setProgressCurrent(loaded);
+                    setProgressTotal(total);
+                });
+                setLoadingMessage("Guardando archivo...");
+                await window.cordova.plugins.safMediastore.writeFile({
+                    data: base64,
+                    filename: fileName,
+                    mimeType: "application/zip"
+                });
+                alert("Shapefile guardado correctamente");
+            } else {
+                // Navegador: simula progreso de guardado
+                setLoadingMessage("Guardando archivo...");
+                for (let i = 1; i <= 100; i += 10) {
+                    setProgress(i);
+                    setProgressCurrent(i);
+                    setProgressTotal(100);
+                    await new Promise((r) => setTimeout(r, 10));
+                }
+                saveAs(zipBlob, fileName);
+                setProgress(100);
+                setProgressCurrent(100);
+                setProgressTotal(100);
+            }
 
-// Función auxiliar para Blob a Base64
-function blobToBase64(blob, onProgress) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result.split(",")[1]);
-    reader.onerror = reject;
-    reader.onprogress = (evt) => {
-      if (evt.lengthComputable && typeof onProgress === "function") {
-        const percent = (evt.loaded / evt.total) * 100;
-        onProgress(percent, evt.loaded, evt.total);
-      }
+        } catch (err) {
+            console.error("Error en exportLayerAsShapefile:", err);
+            alert(`Error al exportar: ${err.message}`);
+        }
+        finally {
+            setTimeout(() => {
+                setLoading(false);
+                setLoadingMessage("");
+                setProgress(0);
+                setProgressCurrent(0);
+                setProgressTotal(0);
+            }, 500); //se fija en 500 para que de tiempo a ver el 100%
+        }
     };
-    reader.readAsDataURL(blob);
-  });
-}
 
-
+    // Función auxiliar para Blob a Base64
+    function blobToBase64(blob, onProgress) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result.split(",")[1]);
+            reader.onerror = reject;
+            reader.onprogress = (evt) => {
+                if (evt.lengthComputable && typeof onProgress === "function") {
+                    const percent = (evt.loaded / evt.total) * 100;
+                    onProgress(percent, evt.loaded, evt.total);
+                }
+            };
+            reader.readAsDataURL(blob);
+        });
+    }
 
 
     // ----- Toggle visibilidad capa -----
@@ -972,28 +986,24 @@ function blobToBase64(blob, onProgress) {
         }
         setExportModalOpen(true);
     };
-const handleExportConfirm = async (idx) => {
-    setExportModalOpen(false);
-    setLoading(true);
-    setLoadingMessage("Guardando archivo...");
-    console.log("Exportar clickeado para capa idx:", idx, layers[idx]);
-    try 
-    {
-        const entry = layers[idx];
-        await exportLayerAsShapefile(entry);
-        console.log("Exportación completada");
-    } 
-    catch (error)
-    {
-        console.error("Error en exportLayerAsShapefile:", error);
-        alert("Error al exportar: " + error.message);
-    }
-    setLoading(false);
-    setLoadingMessage(""); // Oculta el overlay al terminar
-};
-const handleExportCancel = () => {
-    setExportModalOpen(false);
-};
+    const handleExportConfirm = async (idx) => {
+        setExportModalOpen(false);
+        setLoading(true);
+        setLoadingMessage("Guardando archivo...");
+        try {
+            const entry = layers[idx];
+            await exportLayerAsShapefile(entry);
+        }
+        catch (error) {
+            console.error("Error en exportLayerAsShapefile:", error);
+            alert("Error al exportar: " + error.message);
+        }
+        setLoading(false);
+        setLoadingMessage(""); // Oculta el overlay al terminar
+    };
+    const handleExportCancel = () => {
+        setExportModalOpen(false);
+    };
     // ----- JSX de render -----
     return (
         <div>
@@ -1064,11 +1074,11 @@ const handleExportCancel = () => {
                     layerTotal={layerTotal}
                     message={loadingMessage}
                     mode={loadingMessage.includes("Guardando") ||
-                            loadingMessage.includes("Consultando") ||
-                            loadingMessage.includes("Construyendo") ||
-                            loadingMessage.includes("Exportando") ||
-                            loadingMessage.includes("Convirtiendo") ||
-                            loadingMessage.includes("Generando archivo ZIP") ? "export" : "load"}
+                        loadingMessage.includes("Consultando") ||
+                        loadingMessage.includes("Construyendo") ||
+                        loadingMessage.includes("Exportando") ||
+                        loadingMessage.includes("Convirtiendo") ||
+                        loadingMessage.includes("Generando archivo ZIP") ? "export" : "load"}
                 />
             )}
             <MapViewWrapper
