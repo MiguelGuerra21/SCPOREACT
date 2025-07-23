@@ -334,7 +334,6 @@ const getColorForState = (state, index) => {
         return color || "transparent"; // Si ya es string (#ffffff) o undefined
       };
       const color = getColorForState(estado, i);
-      console.log(`Estado: ${estado}, Color:`, getColorForState(estado, i));
                       return (
                         <div
                           key={estado}

@@ -146,7 +146,7 @@ const AppContainer = () => {
           // ✅ Relleno solo si estaba vacío
           attrs[f.name] = f.type === "date" ? epoch : newValueRaw;
         }
-
+        //Log de los atributos que se actualizarán
         console.log(
           `OID ${oid} – campo ${f.name} – prev=`,
           had,
@@ -165,7 +165,6 @@ const AppContainer = () => {
     window.alert("No hay campos vacíos ni seleccionada para actualizar.");
     return;
   }
-  console.log("Updates a aplicar:", updates);
 
   // --- 7) Ejecutar edits ---
   const result = await layer.applyEdits({ updateFeatures: updates });
@@ -776,7 +775,6 @@ const AppContainer = () => {
                     const { type, blob, message } = e.data;
 
                     if (type === "done" && blob) {
-                        console.log("ZIP recibido del worker, tamaño:", blob.size);
                         if (blob.size < 100) {
                             reject(new Error("Archivo generado demasiado pequeño"));
                         } else {

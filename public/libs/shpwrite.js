@@ -1092,7 +1092,7 @@ function timestamp() {
 }
 
 
-// log is just a thin wrapper to console.log that prepends a timestamp
+// log is just a thin wrapper to log that prepends a timestamp
 exports.log = function() {
   console.log('%s - %s', timestamp(), exports.format.apply(exports, arguments));
 };

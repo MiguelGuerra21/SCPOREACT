@@ -3,12 +3,9 @@
 importScripts('/libs/shpwrite.js');
 
 self.onmessage = async (e) => {
-  console.log("Worker: mensaje recibido", e.data);
   const { geojson } = e.data;
 
   try {
-    console.log("Worker: generando shapefile...");
-    console.log("Worker: shpwrite existe?", !!self.shpwrite);
     // Opción base64
     let zipString = self.shpwrite.zip(geojson, { base64: true });
 
