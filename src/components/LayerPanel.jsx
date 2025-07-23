@@ -334,9 +334,22 @@ const getColorForState = (state, colores, index) => {
           const [r, g, b, a] = color;
           return `rgba(${r}, ${g}, ${b}, ${a})`;
         }
-        return color || "transparent"; // Si ya es string (#ffffff) o undefined
+        return color || "transparent"; 
+      };
+      const getBorderColorForState = (color, estado) => {
+        if (estado === "Sin estado") return "#000"; // borde negro fijo
+        if (Array.isArray(color)) {
+          const [r, g, b] = color;
+          return `rgba(${r}, ${g}, ${b}, 1)`; 
+        }
+          if (color.startsWith("rgba")) {
+          const [r, g, b] = color.match(/\d+/g).map(Number);
+          return `rgba(${r}, ${g}, ${b}, 1)`;
+        }
+        return color; 
       };
       const color = getColorForState(estado, entry.stateColors, i);
+      const borderColor = getBorderColorForState(color, estado);
                       return (
                         <div
                           key={estado}
@@ -358,7 +371,7 @@ const getColorForState = (state, colores, index) => {
                               height: 12,
                               marginRight: 6,
                               backgroundColor: toCssColor(color),
-                              border: "1px solid #ccc",
+                              border: `3px solid ${borderColor}`,
                               borderRadius: 2,
                               flexShrink: 0,
                             }}
