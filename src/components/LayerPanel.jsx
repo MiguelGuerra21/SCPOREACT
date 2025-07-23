@@ -268,7 +268,15 @@ const getColorForState = (state, index) => {
             No hay capas cargadas
           </p>
         )}
-
+ {/* CONTENEDOR CON SCROLL */}
+  <div
+    style={{
+      maxHeight: "300px",      
+      overflowY: "auto",        
+      paddingRight: "6px",     
+      marginBottom: "8px",      
+    }}
+  >
         {layers.map((entry) => {
           const isOpenLayer = openDetails === entry.id;
           const estadosRaw = layerStates[entry.id]?.estados || [];
@@ -306,9 +314,6 @@ const getColorForState = (state, index) => {
               {isOpenLayer && (
                 <div
                   style={{
-                    alignSelf: "stretch",
-                    maxHeight: 150,
-                    overflowY: "auto",
                     backgroundColor: "#f9f9f9",
                     border: "1px solid #ddd",
                     borderRadius: 4,
@@ -393,7 +398,7 @@ const getColorForState = (state, index) => {
             </div>
           );
         })}
-
+</div>
         {layers.length > 0 && (
           <button
             style={centerBtnStyle}
