@@ -31,7 +31,6 @@ const LayerPanel = ({
           query.returnGeometry = false;
           query.outFields = ["*"];
           query.where = "1=1";
-          query.num = 10000;
 
           const result = await layer.queryFeatures(query);
           const features = result.features;
