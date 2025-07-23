@@ -46,140 +46,140 @@ const AppContainer = () => {
     const fileInputRef = useRef(null);
 
 
-   async function handleBatchEditApply(
-  layerIndex,    // índice en el array `layers`
-  fieldName,     // p.ej. "Fecha ET03"
-  newValueRaw    // "YYYY-MM-DD"
-) {
-  // --- 1) Entrada y validaciones iniciales ---
-  const entry = layers[layerIndex];
-  if (!entry) {
-    window.alert("Error interno: capa no encontrada.");
-    return;
-  }
-  const { layer, selectedIds } = entry;
-  if (!selectedIds?.length) {
-    window.alert("No hay features seleccionadas en la capa.");
-    setBatchEditOpen(false);
-    return;
-  }
-
-  // --- 2) Extraer número de etapa (ETnn) ---
-  const m = fieldName.match(/ET\s*0*?(\d+)$/i);
-  const selNum = m ? parseInt(m[1], 10) : null;
-  if (selNum == null) {
-    window.alert(`Nombre de campo inválido: ${fieldName}`);
-    return;
-  }
-
-  // --- 3) Listar todos los campos "Fecha ETnn" <= etapa seleccionada ---
-  const allFecha = layer.fields
-    .filter(f => {
-      const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
-      return t && parseInt(t[1],10) <= selNum;
-    })
-    .map(f => ({
-      name: f.name,
-      type: f.type,
-      num: parseInt(f.name.match(/\d+$/)[0], 10)
-    }));
-  if (!allFecha.length) {
-    window.alert("No se encontraron campos Fecha ET.");
-    return;
-  }
-
-  // --- 4) Validar la nueva fecha ---
-  if (!newValueRaw) {
-    window.alert("Selecciona una fecha.");
-    return;
-  }
-  const d = new Date(newValueRaw);
-  if (isNaN(d)) {
-    window.alert("Formato de fecha inválido.");
-    return;
-  }
-  const epoch = d.getTime();
-
-  // --- 5) Leer valores actuales ---
-  const where = selectedIds.map(id => `OBJECTID = ${id}`).join(" OR ");
-  const q = layer.createQuery();
-  q.where = where;
-  q.outFields = ["*"]; // todos los campos
-  q.returnGeometry = false;
-  const res = await layer.queryFeatures(q);
-  const beforeMap = {};
-  res.features.forEach(feat => {
-    beforeMap[feat.attributes.OBJECTID] = feat.attributes;
-  });
-  console.log("ANTES de editar (map):", beforeMap);
-
-  // --- 6) Preparar updates respetando la lógica ---
-  const updates = selectedIds
-    .map(oid => {
-      const prev = beforeMap[oid] || {};
-      const attrs = { OBJECTID: oid };
-
-      allFecha.forEach(f => {
-        // ¿Tenía valor previo?
-        const had = prev[f.name];
-        const nonEmpty = had != null && String(had).trim() !== "";
-
-        if (f.num === selNum) {
-          // ❗ Siempre sobreescribo la etapa seleccionada
-          attrs[f.name] = f.type === "date" ? epoch : newValueRaw;
-        } else if (!nonEmpty) {
-          // ✅ Relleno solo si estaba vacío
-          attrs[f.name] = f.type === "date" ? epoch : newValueRaw;
+    async function handleBatchEditApply(
+        layerIndex,    // índice en el array `layers`
+        fieldName,     // p.ej. "Fecha ET03"
+        newValueRaw    // "YYYY-MM-DD"
+    ) {
+        // --- 1) Entrada y validaciones iniciales ---
+        const entry = layers[layerIndex];
+        if (!entry) {
+            window.alert("Error interno: capa no encontrada.");
+            return;
         }
-        //Log de los atributos que se actualizarán
-        console.log(
-          `OID ${oid} – campo ${f.name} – prev=`,
-          had,
-          "nonEmpty?",
-          nonEmpty,
-          "overwrite selected?",
-          f.num === selNum
+        const { layer, selectedIds } = entry;
+        if (!selectedIds?.length) {
+            window.alert("No hay features seleccionadas en la capa.");
+            setBatchEditOpen(false);
+            return;
+        }
+
+        // --- 2) Extraer número de etapa (ETnn) ---
+        const m = fieldName.match(/ET\s*0*?(\d+)$/i);
+        const selNum = m ? parseInt(m[1], 10) : null;
+        if (selNum == null) {
+            window.alert(`Nombre de campo inválido: ${fieldName}`);
+            return;
+        }
+
+        // --- 3) Listar todos los campos "Fecha ETnn" <= etapa seleccionada ---
+        const allFecha = layer.fields
+            .filter(f => {
+                const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
+                return t && parseInt(t[1], 10) <= selNum;
+            })
+            .map(f => ({
+                name: f.name,
+                type: f.type,
+                num: parseInt(f.name.match(/\d+$/)[0], 10)
+            }));
+        if (!allFecha.length) {
+            window.alert("No se encontraron campos Fecha ET.");
+            return;
+        }
+
+        // --- 4) Validar la nueva fecha ---
+        if (!newValueRaw) {
+            window.alert("Selecciona una fecha.");
+            return;
+        }
+        const d = new Date(newValueRaw);
+        if (isNaN(d)) {
+            window.alert("Formato de fecha inválido.");
+            return;
+        }
+        const epoch = d.getTime();
+
+        // --- 5) Leer valores actuales ---
+        const where = selectedIds.map(id => `OBJECTID = ${id}`).join(" OR ");
+        const q = layer.createQuery();
+        q.where = where;
+        q.outFields = ["*"]; // todos los campos
+        q.returnGeometry = false;
+        const res = await layer.queryFeatures(q);
+        const beforeMap = {};
+        res.features.forEach(feat => {
+            beforeMap[feat.attributes.OBJECTID] = feat.attributes;
+        });
+        console.log("ANTES de editar (map):", beforeMap);
+
+        // --- 6) Preparar updates respetando la lógica ---
+        const updates = selectedIds
+            .map(oid => {
+                const prev = beforeMap[oid] || {};
+                const attrs = { OBJECTID: oid };
+
+                allFecha.forEach(f => {
+                    // ¿Tenía valor previo?
+                    const had = prev[f.name];
+                    const nonEmpty = had != null && String(had).trim() !== "";
+
+                    if (f.num === selNum) {
+                        // ❗ Siempre sobreescribo la etapa seleccionada
+                        attrs[f.name] = f.type === "date" ? epoch : newValueRaw;
+                    } else if (!nonEmpty) {
+                        // ✅ Relleno solo si estaba vacío
+                        attrs[f.name] = f.type === "date" ? epoch : newValueRaw;
+                    }
+                    //Log de los atributos que se actualizarán
+                    console.log(
+                        `OID ${oid} – campo ${f.name} – prev=`,
+                        had,
+                        "nonEmpty?",
+                        nonEmpty,
+                        "overwrite selected?",
+                        f.num === selNum
+                    );
+                });
+
+                return Object.keys(attrs).length > 1 ? { attributes: attrs } : null;
+            })
+            .filter(u => u);
+
+        if (!updates.length) {
+            window.alert("No hay campos vacíos ni seleccionada para actualizar.");
+            return;
+        }
+
+        // --- 7) Ejecutar edits ---
+        const result = await layer.applyEdits({ updateFeatures: updates });
+        if (result.updateFeaturesResults) {
+            const fails = result.updateFeaturesResults.filter(r => !r.success);
+            if (fails.length) {
+                console.error("Errores al actualizar:", fails);
+                window.alert("Algunas entidades no pudieron actualizarse.");
+            }
+        }
+
+        // --- 8) Forzar redraw y refrescar popup si está abierto ---
+        const view = viewRef.current;
+        if (view?.requestRender) view.requestRender();
+        else { layer.visible = false; layer.visible = true; }
+        if (view?.popup.open) {
+            const selFeat = view.popup.selectedFeature;
+            if (selFeat && selectedIds.includes(selFeat.attributes.OBJECTID)) {
+                const loc = view.popup.location;
+                view.popup.close();
+                view.popup.open({ features: [selFeat], location: loc });
+            }
+        }
+
+        // --- 9) Aviso al usuario ---
+        window.alert(
+            `Se actualizaron ${updates.length} feature(s) en "${entry.name}".`
         );
-      });
-
-      return Object.keys(attrs).length > 1 ? { attributes: attrs } : null;
-    })
-    .filter(u => u);
-
-  if (!updates.length) {
-    window.alert("No hay campos vacíos ni seleccionada para actualizar.");
-    return;
-  }
-
-  // --- 7) Ejecutar edits ---
-  const result = await layer.applyEdits({ updateFeatures: updates });
-  if (result.updateFeaturesResults) {
-    const fails = result.updateFeaturesResults.filter(r => !r.success);
-    if (fails.length) {
-      console.error("Errores al actualizar:", fails);
-      window.alert("Algunas entidades no pudieron actualizarse.");
+        setBatchEditOpen(false);
     }
-  }
-
-  // --- 8) Forzar redraw y refrescar popup si está abierto ---
-  const view = viewRef.current;
-  if (view?.requestRender) view.requestRender();
-  else { layer.visible = false; layer.visible = true; }
-  if (view?.popup.open) {
-    const selFeat = view.popup.selectedFeature;
-    if (selFeat && selectedIds.includes(selFeat.attributes.OBJECTID)) {
-      const loc = view.popup.location;
-      view.popup.close();
-      view.popup.open({ features: [selFeat], location: loc });
-    }
-  }
-
-  // --- 9) Aviso al usuario ---
-  window.alert(
-    `Se actualizaron ${updates.length} feature(s) en "${entry.name}".`
-  );
-  setBatchEditOpen(false);
-}
 
     // Sincronizar layersRef.current siempre que cambie layers
     useEffect(() => {
@@ -534,7 +534,7 @@ const AppContainer = () => {
                     uniqueValueInfos,
                 },
                 popupTemplate: {
-                    title: `${nameWithoutExt} - ID:` + "{fid}",
+                    title: `${nameWithoutExt} - ID: {fid}`,
                     content: [
                         {
                             type: "fields",
