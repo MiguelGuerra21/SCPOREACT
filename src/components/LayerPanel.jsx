@@ -242,9 +242,9 @@ const LayerPanel = ({
     setOpenDetails((old) => (old === id ? null : id));
   };
 
-const getColorForState = (state, index) => {
-  if (stateColors && stateColors.hasOwnProperty(state) && stateColors[state] != null) {
-    return stateColors[state];
+const getColorForState = (state, colores, index) => {
+  if (colores && colores.hasOwnProperty(state) && colores[state] != null) {
+    return colores[state];
   }
 };
 
@@ -336,7 +336,7 @@ const getColorForState = (state, index) => {
         }
         return color || "transparent"; // Si ya es string (#ffffff) o undefined
       };
-      const color = getColorForState(estado, i);
+      const color = getColorForState(estado, entry.stateColors, i);
                       return (
                         <div
                           key={estado}
