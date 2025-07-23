@@ -95,7 +95,7 @@ const LayerPanel = ({
           const idxSinEstado = estadosTodos.indexOf("Sin estado");
           if (idxSinEstado !== -1) {
             estadosTodos.splice(idxSinEstado, 1);
-            estadosTodos.push("Sin estado");
+            estadosTodos.unshift("Sin estado");
           }
           // Para estados sin conteo asignar 0
           estadosTodos.forEach((e) => {
@@ -279,7 +279,7 @@ const getColorForState = (state, colores, index) => {
         {layers.map((entry) => {
           const isOpenLayer = openDetails === entry.id;
           const estadosRaw = layerStates[entry.id]?.estados || [];
-          const estados = estadosRaw.filter(e => e !== "Sin estado").concat("Sin estado");
+          const estados = ["Sin estado"].concat(estadosRaw.filter(e => e !== "Sin estado"));
           const conteos = layerStates[entry.id]?.conteos || {};
           const porcentajes = layerStates[entry.id]?.porcentajes || {};
           const total = Object.values(conteos).reduce((a, b) => a + b, 0);
@@ -325,9 +325,8 @@ const getColorForState = (state, colores, index) => {
 {estados.length === 0 ? (
   <em style={{ color: "#888" }}>No hay estados detectados</em>
 ) : (
-  estadosRaw
-    .filter(e => e !== "Sin estado")
-    .concat("Sin estado")
+   ["Sin estado"]
+    .concat(estadosRaw.filter(e => e !== "Sin estado"))
     .map((estado, i) => {
       const pct = porcentajes[estado] || 0;
       const toCssColor = (color) => {
