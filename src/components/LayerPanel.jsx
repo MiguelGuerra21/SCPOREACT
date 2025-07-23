@@ -282,7 +282,6 @@ const getColorForState = (state, index) => {
           const estados = estadosRaw.filter(e => e !== "Sin estado").concat("Sin estado");
           const conteos = layerStates[entry.id]?.conteos || {};
           const porcentajes = layerStates[entry.id]?.porcentajes || {};
-          const total = Object.values(conteos).reduce((a, b) => a + b, 0);
 
           return (
             <div key={entry.id} style={layerItemStyle}>
