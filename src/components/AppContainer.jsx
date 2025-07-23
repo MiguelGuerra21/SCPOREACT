@@ -288,44 +288,16 @@ const AppContainer = () => {
         }
     };
 
-
-    // Genera un color distintivo según índice
-    const generateColorForIndex = (index) => {
-        // Cada estado avanza 20° en el espectro HSL desde 10° hasta 120°
-        // (Si pasamos 120°, nos mantenemos en verde)
-        const startHue = 10;
-        const step = 20;
-        const hue = Math.min(startHue + index * step, 120);
-
-        const saturation = 90; // saturación alta para colores vivos
-        const lightness = 45;  // contraste bueno
-
-        // Convertimos HSL a RGB
-        const h = hue / 360;
-        const s = saturation / 100;
-        const l = lightness / 100;
-
-        let r, g, b;
-        if (s === 0) {
-            r = g = b = l;
-        } else {
-            const hue2rgb = (p, q, t) => {
-                if (t < 0) t += 1;
-                if (t > 1) t -= 1;
-                if (t < 1 / 6) return p + (q - p) * 6 * t;
-                if (t < 1 / 2) return q;
-                if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-                return p;
-            };
-            const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-            const p = 2 * l - q;
-            r = hue2rgb(p, q, h + 1 / 3);
-            g = hue2rgb(p, q, h);
-            b = hue2rgb(p, q, h - 1 / 3);
+    function generateRedToGreenGradient(steps) {
+        const colors = [];
+        for (let i = 0; i < steps; i++) {
+            const t = i / Math.max(steps - 1, 1); // 0 → 1
+            const r = Math.round(255 * (1 - t));  // rojo decrece
+            const g = Math.round(255 * t);        // verde crece
+            colors.push([r, g, 0]);               // RGB
         }
-        return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-    };
-
+        return colors;
+    }
     // Carga shp-write UMD desde CDN (window.shpwrite)
     const loadShpWriteFromCDN = () => {
         return new Promise((resolve, reject) => {
@@ -380,8 +352,6 @@ const AppContainer = () => {
                 setLoading(false);
                 return;
             }
-
-            const [r, g, b] = generateColorForIndex(newId);
 
             // --- Detectar campos de fecha dinámicamente ---
             // --- Detectar campos de fecha dinámicamente ---
@@ -499,12 +469,12 @@ const AppContainer = () => {
 
             // --- Asignar colores ---
             const estadoAColor = {};
+            const gradiente = generateRedToGreenGradient(estadosUnicos.length);
             estadosUnicos.forEach((estado, i) => {
                 if (estado === "Sin estado") {
                     estadoAColor[estado] = [255, 255, 255, 0.5];
                 } else {
-                    const baseColor = generateColorForIndex(i);
-                    estadoAColor[estado] = [...baseColor, 0.5]; // semitransparente
+                    estadoAColor[estado] = [...gradiente[i], 0.5];
                 }
             });
             // --- Detectar tipo de geometría ---
