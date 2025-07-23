@@ -1,5 +1,5 @@
 // src/components/TopMenu.jsx
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
 import { FaBars } from "react-icons/fa";
 import LayerPanel from "./LayerPanel";

@@ -1,16 +1,11 @@
 // src/components/AppContainer.jsx
 
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import JSZip from "jszip";
 import shpjs from "shpjs";
-import { Filesystem, Directory } from '@capacitor/filesystem';
-import { Capacitor } from '@capacitor/core';
-import { App } from '@capacitor/app';
 import { saveAs } from "file-saver";
 import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
-import Map from "@arcgis/core/Map";
-import Extent from "@arcgis/core/geometry/Extent";
 import TopMenu from "./TopMenu";
 import FileLoader from "./FileLoader";
 import MapViewWrapper from "./MapViewWrapper";
@@ -18,8 +13,6 @@ import SelectedCountBanner from "./SelectedCountBanner";
 import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
-import GeoJSONLayer from "@arcgis/core/layers/GeoJSONLayer";
-import LayerPanel from "./LayerPanel";
 import ExportWorker from "../workers/exportShapefile.worker.js";
 
 
@@ -27,7 +20,6 @@ import ExportWorker from "../workers/exportShapefile.worker.js";
 const AppContainer = () => {
     // ----- Estados y refs -----
     const [layers, setLayers] = useState([]);       // lista de entradas de capa
-    const [topOffset, setTopOffset] = useState(0);
     const layersRef = useRef([]);                   // ref sincronizado a layers para acceso en closures
     const layerIdRef = useRef(0);                   // para asignar id incremental a cada capa
     const [menuOpen, setMenuOpen] = useState(false);
@@ -53,13 +45,6 @@ const AppContainer = () => {
     // Ref para el input de archivos
     const fileInputRef = useRef(null);
 
-    const isAndroid = Capacitor.getPlatform() === "android"; // Detectar si es Android
-
-    // Compute if any selected features are polygons
-    const hasPolygons = layers.some(entry =>
-        entry.selectedIds.length > 0 &&
-        entry.layer.geometryType === 'polygon'
-    );
 
    async function handleBatchEditApply(
   layerIndex,    // índice en el array `layers`
@@ -196,35 +181,10 @@ const AppContainer = () => {
   setBatchEditOpen(false);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     // Sincronizar layersRef.current siempre que cambie layers
     useEffect(() => {
         layersRef.current = layers;
     }, [layers]);
-
-    // ----- Callback que envía MapView a este contenedor -----
-    // Se pasará a MapViewWrapper para que, cuando se cree el view, hagamos viewRef.current = view
-    const handleViewReady = (view) => {
-        viewRef.current = view;
-        // Nota: el estado inicial de la vista (center/zoom/extent) se capturó en MapViewWrapper y
-        // almacenó en initialCenterRef, initialZoomRef y initialExtentRef.
-    };
 
     // ----- Funciones auxiliares -----
 
@@ -326,18 +286,6 @@ const AppContainer = () => {
         return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
     };
 
-    // Carga shp-write UMD desde CDN (window.shpwrite)
-    const loadShpWriteFromCDN = () => {
-        return new Promise((resolve, reject) => {
-            if (window.shpwrite) return resolve();
-            const script = document.createElement("script");
-            script.src = "https://unpkg.com/@mapbox/shp-write@latest/shpwrite.js";
-            script.onload = () => resolve();
-            script.onerror = () => reject(new Error("Failed to load shp-write"));
-            document.head.appendChild(script);
-        });
-    };
-
     // ----- Manejador de apertura de archivo (shapefile ZIP) -----
     const handleFileOpen = async (file) => {
         const view = viewRef.current;
@@ -380,8 +328,6 @@ const AppContainer = () => {
                 setLoading(false);
                 return;
             }
-
-            const [r, g, b] = generateColorForIndex(newId);
 
             // --- Detectar campos de fecha dinámicamente ---
             // --- Detectar campos de fecha dinámicamente ---
@@ -689,24 +635,6 @@ const AppContainer = () => {
         }
     };
 
-
-
-
-
-
-    // ----- Handler para cuando se seleccionan archivos en el input -----
-    const handleFileLoad = async (files) => {
-        setLoading(true);
-        for (const f of files) {
-            // procesar secuencialmente o en paralelo con Promise.all:
-            // await handleFileOpen(f);
-            // Para procesar en paralelo: await Promise.all(files.map(f=>handleFileOpen(f)));
-            await handleFileOpen(f);
-        }
-        setLoading(false);
-    };
-
-
     const exportLayerAsShapefile = async (entry) => {
         const { layer, name } = entry;
         if (!layer) {
@@ -940,10 +868,6 @@ const AppContainer = () => {
         if (confirmed) window.close();
         setMenuOpen(false);
     };
-
-    // ----- Menú: abrir/cerrar -----
-    const toggleMenu = (val) =>
-        setMenuOpen(o => typeof val === 'boolean' ? val : !o);
 
     const handleOpenFiles = () => {
         // Dispara el input oculto

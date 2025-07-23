@@ -1,9 +1,7 @@
 // BatchEditModal.jsx
-import React, { useState, useEffect, useMemo } from "react";
-import { Capacitor } from "@capacitor/core";
+import { useState, useEffect, useMemo } from "react";
 
 export default function BatchEditModal({ layers, onCancel, onApply }) {
-  const isAndroid = Capacitor.getPlatform() === "android";
 
   // 1) Sólo capas poligonales con selección
   const layersWithSel = useMemo(() => {
@@ -38,7 +36,7 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
           field: name,      // p.ej. "Fecha ET03"
           num,              // 3
           etapaField,       // "Etapa 03"
-          label: `Etapa ${num}` 
+          label: `Etapa ${num}`
         };
       })
       .sort((a, b) => a.num - b.num);
@@ -89,21 +87,21 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
       where: `OBJECTID = ${oid0}`,
       outFields: [selectedField]
     })
-    .then(res => {
-      let raw = res.features[0]?.attributes[selectedField];
-      let formatted = "";
-      if (raw != null) {
-        if (typeof raw === "number") {
-          const d = new Date(raw);
-          if (!isNaN(d)) formatted = d.toISOString().slice(0,10);
-        } else {
-          const d = new Date(raw);
-          formatted = !isNaN(d) ? d.toISOString().slice(0,10) : String(raw).slice(0,10);
+      .then(res => {
+        let raw = res.features[0]?.attributes[selectedField];
+        let formatted = "";
+        if (raw != null) {
+          if (typeof raw === "number") {
+            const d = new Date(raw);
+            if (!isNaN(d)) formatted = d.toISOString().slice(0, 10);
+          } else {
+            const d = new Date(raw);
+            formatted = !isNaN(d) ? d.toISOString().slice(0, 10) : String(raw).slice(0, 10);
+          }
         }
-      }
-      setDateValue(formatted);
-    })
-    .catch(() => setDateValue(""));
+        setDateValue(formatted);
+      })
+      .catch(() => setDateValue(""));
   }, [selectedField, selectedLayerIdx, layersWithSel]);
 
   // 6) Pre‑llenado de dateValue
@@ -124,12 +122,12 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
           // si es número, lo tratamos como epoch
           if (typeof raw === "number") {
             const d = new Date(raw);
-            if (!isNaN(d)) formatted = d.toISOString().slice(0,10);
+            if (!isNaN(d)) formatted = d.toISOString().slice(0, 10);
           }
           // si es string
           else if (typeof raw === "string") {
             const d = new Date(raw);
-            formatted = !isNaN(d) ? d.toISOString().slice(0,10) : raw.slice(0,10);
+            formatted = !isNaN(d) ? d.toISOString().slice(0, 10) : raw.slice(0, 10);
           }
         }
         setDateValue(formatted);
@@ -139,6 +137,27 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
 
   // 7) Si no hay nada que mostrar
   if (!layersWithSel.length || !allEtapas.length) return null;
+
+  // 8) Estilos
+  const fieldGroupStyle = {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,               // espacio entre label y control
+    marginBottom: 12      // espacio entre grupos de campos
+  };
+  const labelStyle = {
+    fontSize: 14,
+    margin: 0,
+    marginBottom: 4,
+    textAlign: "left"
+  };
+  const controlStyle = {
+    width: "100%",
+    padding: 8,
+    borderRadius: 4,
+    border: "1px solid #ccc",
+    boxSizing: "border-box"
+  };
 
   // === JSX ===
   return (
@@ -187,10 +206,10 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
           )}
 
           {/* Selector de etapa */}
-          <div>
-            <label style={{ display: "block", marginBottom: 4 }}>Etapa a editar:</label>
+          <div style={fieldGroupStyle}>
+            <label style={labelStyle}>Etapa a editar:</label>
             <select
-              style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+              style={controlStyle}
               value={selectedField}
               onChange={e => setSelectedField(e.target.value)}
             >
@@ -203,13 +222,13 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
           </div>
 
           {/* Selector de fecha */}
-          <div>
-            <label style={{ display: "block", marginBottom: 4 }}>
+          <div style={fieldGroupStyle}>
+            <label style={labelStyle}>
               Fecha para “{availableEtapas.find(e => e.field === selectedField)?.label}”:
             </label>
             <input
               type="date"
-              style={{ width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc" }}
+              style={controlStyle}
               value={dateValue}
               onChange={e => setDateValue(e.target.value)}
             />
