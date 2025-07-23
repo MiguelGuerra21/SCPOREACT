@@ -11,7 +11,6 @@ export default function TopMenu({
   onExportSHP,
   onClearMap,
   onCloseApp,
-  // pass through LayerPanel props:
   layers,
   onToggleVisibility,
   onCenterView,
@@ -68,7 +67,7 @@ export default function TopMenu({
     { label: "Abrir nuevo…", action: onOpenFiles },
     { label: "Exportar Shapefile…", action: onExportSHP },
     { label: "Limpiar mapa", action: onClearMap },
-    { label: "Cerrar aplicación", action: onCloseApp }
+    ...(!isAndroid ? [{ label: "Cerrar aplicación", action: onCloseApp }] : [])
   ];
 
   const itemStyle = {

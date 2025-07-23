@@ -22,24 +22,19 @@ function createMainWindow() {
 
   mainWindow.loadFile(indexHtmlPath)
     .then(() => {
-      console.log('index.html cargado correctamente');
     })
     .catch((err) => {
-      console.error('Error al cargar index.html:', err);
     });
 }
 
 app.whenReady().then(() => {
-  console.log('App lista');
   createMainWindow();
 });
 
 app.on('window-all-closed', () => {
-  console.log('Todas las ventanas cerradas');
   if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('activate', () => {
-  console.log('Activando app');
   if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
 });
