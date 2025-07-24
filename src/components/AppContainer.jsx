@@ -449,8 +449,6 @@ const AppContainer = () => {
                 return indexA - indexB;
             });
 
-
-
             // --- Crear campos dinámicos ---
             const firstProps = geojson.features[0]?.properties || {};
             const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
@@ -460,11 +458,6 @@ const AppContainer = () => {
                 else if (value instanceof Date) type = "date";
                 else type = "string";
                 return { name: key, alias: key, type };
-            });
-            dynamicFields.push({
-                name: "estadoActual",
-                alias: "Estado Actual",
-                type: "string",
             });
 
             // --- Asignar colores ---
@@ -538,7 +531,7 @@ const AppContainer = () => {
                 fields: [...dynamicFields],
                 renderer: {
                     type: "unique-value",
-                    field: "estadoActual",
+                    field: "Estado",
                     defaultSymbol:
                         geometryType === "point"
                             ? {
@@ -601,8 +594,8 @@ const AppContainer = () => {
                             }
                         });
 
-                        // Asignar estadoActual
-                        propsClean.estadoActual = detectarEstado(f);
+                        // Asignar Estado
+                        propsClean.Estado = detectarEstado(f);
 
                         return {
                             geometry,
