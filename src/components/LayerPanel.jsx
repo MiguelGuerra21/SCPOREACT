@@ -95,7 +95,7 @@ const LayerPanel = ({
           const idxSinEstado = estadosTodos.indexOf("Sin estado");
           if (idxSinEstado !== -1) {
             estadosTodos.splice(idxSinEstado, 1);
-            estadosTodos.push("Sin estado");
+            estadosTodos.unshift("Sin estado");
           }
           // Para estados sin conteo asignar 0
           estadosTodos.forEach((e) => {
@@ -279,7 +279,7 @@ const getColorForState = (state, colores, index) => {
         {layers.map((entry) => {
           const isOpenLayer = openDetails === entry.id;
           const estadosRaw = layerStates[entry.id]?.estados || [];
-          const estados = estadosRaw.filter(e => e !== "Sin estado").concat("Sin estado");
+          const estados = ["Sin estado"].concat(estadosRaw.filter(e => e !== "Sin estado"));
           const conteos = layerStates[entry.id]?.conteos || {};
           const porcentajes = layerStates[entry.id]?.porcentajes || {};
 
@@ -324,9 +324,8 @@ const getColorForState = (state, colores, index) => {
 {estados.length === 0 ? (
   <em style={{ color: "#888" }}>No hay estados detectados</em>
 ) : (
-  estadosRaw
-    .filter(e => e !== "Sin estado")
-    .concat("Sin estado")
+   ["Sin estado"]
+    .concat(estadosRaw.filter(e => e !== "Sin estado"))
     .map((estado, i) => {
       const pct = porcentajes[estado] || 0;
       const toCssColor = (color) => {
@@ -334,9 +333,22 @@ const getColorForState = (state, colores, index) => {
           const [r, g, b, a] = color;
           return `rgba(${r}, ${g}, ${b}, ${a})`;
         }
-        return color || "transparent"; // Si ya es string (#ffffff) o undefined
+        return color || "transparent"; 
+      };
+      const getBorderColorForState = (color, estado) => {
+        if (estado === "Sin estado") return "#000"; // borde negro fijo
+        if (Array.isArray(color)) {
+          const [r, g, b] = color;
+          return `rgba(${r}, ${g}, ${b}, 1)`; 
+        }
+          if (color.startsWith("rgba")) {
+          const [r, g, b] = color.match(/\d+/g).map(Number);
+          return `rgba(${r}, ${g}, ${b}, 1)`;
+        }
+        return color; 
       };
       const color = getColorForState(estado, entry.stateColors, i);
+      const borderColor = getBorderColorForState(color, estado);
                       return (
                         <div
                           key={estado}
@@ -358,7 +370,7 @@ const getColorForState = (state, colores, index) => {
                               height: 12,
                               marginRight: 6,
                               backgroundColor: toCssColor(color),
-                              border: "1px solid #ccc",
+                              border: `3px solid ${borderColor}`,
                               borderRadius: 2,
                               flexShrink: 0,
                             }}
