@@ -247,43 +247,16 @@ const AppContainer = () => {
         }
     };
 
-
-    // Genera un color distintivo según índice
-    const generateColorForIndex = (index) => {
-        // Cada estado avanza 20° en el espectro HSL desde 10° hasta 120°
-        // (Si pasamos 120°, nos mantenemos en verde)
-        const startHue = 10;
-        const step = 20;
-        const hue = Math.min(startHue + index * step, 120);
-
-        const saturation = 90; // saturación alta para colores vivos
-        const lightness = 45;  // contraste bueno
-
-        // Convertimos HSL a RGB
-        const h = hue / 360;
-        const s = saturation / 100;
-        const l = lightness / 100;
-
-        let r, g, b;
-        if (s === 0) {
-            r = g = b = l;
-        } else {
-            const hue2rgb = (p, q, t) => {
-                if (t < 0) t += 1;
-                if (t > 1) t -= 1;
-                if (t < 1 / 6) return p + (q - p) * 6 * t;
-                if (t < 1 / 2) return q;
-                if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-                return p;
-            };
-            const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-            const p = 2 * l - q;
-            r = hue2rgb(p, q, h + 1 / 3);
-            g = hue2rgb(p, q, h);
-            b = hue2rgb(p, q, h - 1 / 3);
+    function generateRedToGreenGradient(steps) {
+        const colors = [];
+        for (let i = 0; i < steps; i++) {
+            const t = i / Math.max(steps - 1, 1); // 0 → 1
+            const r = Math.round(255 * (1 - t));  // rojo decrece
+            const g = Math.round(255 * t);        // verde crece
+            colors.push([r, g, 0]);               // RGB
         }
-        return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-    };
+        return colors;
+    }
 
     // ----- Manejador de apertura de archivo (shapefile ZIP) -----
     const handleFileOpen = async (file) => {
@@ -292,45 +265,47 @@ const AppContainer = () => {
 
         const newId = layerIdRef.current++;
         const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-        if (layersRef.current.some((e) => e.name === nameWithoutExt)) {
+
+        // Verificar duplicados usando un Set para mejor performance
+        const layerNames = new Set(layersRef.current.map(layer => layer.name));
+        if (layerNames.has(nameWithoutExt)) {
             window.alert("No puedes cargar dos veces la misma capa");
             return;
         }
 
+        // Estado de carga
         setLoading(true);
         setProgress(0);
         setProgressCurrent(0);
         setProgressTotal(0);
 
         try {
-            setLoadingMessage("Descomprimiendo archivo ZIP ");
+            //Procesamiento inicial del archivo
+            setLoadingMessage("Descomprimiendo archivo ZIP");
             const arrayBuffer = await file.arrayBuffer();
             const zip = await JSZip.loadAsync(arrayBuffer);
 
-            setLoadingMessage("Leyendo archivos ");
-            const fileNames = Object.keys(zip.files);
-            const hasPrj = fileNames.some((name) =>
+            setLoadingMessage("Validando archivos");
+            const hasPrj = Object.keys(zip.files).some(name => 
                 name.toLowerCase().endsWith(".prj")
             );
             if (!hasPrj) {
                 window.alert(
                     "No se puede mostrar una capa no geolocalizada junto a las localizadas"
                 );
-                setLoading(false);
                 return;
             }
 
+            //Parsear el shapefile
             setLoadingMessage("Parseando shapefile y construyendo features ");
             const geojson = await shpjs(arrayBuffer);
-            if (!geojson || !geojson.features?.length) {
-                console.warn("No valid features found in shapefile:", file.name);
-                setLoading(false);
+
+            if (!geojson?.features?.length) {
+                console.warn("No se encontraron features válidas en el shapefile:", file.name);
                 return;
             }
 
             // --- Detectar campos de fecha dinámicamente ---
-            // --- Detectar campos de fecha dinámicamente ---
-            // --- Función para validar fecha ---
             function esFechaValida(val) {
                 if (val instanceof Date) {
                     return val.getFullYear() >= 1900;
@@ -395,9 +370,7 @@ const AppContainer = () => {
                 });
             });
 
-
             // --- Ordenar estados ---
-            // Creamos una lista de estados en el orden en que aparecen las etapas
             const ordenDinamico = [];
             etapaCampos.forEach((campo) => {
                 geojson.features.forEach((f) => {
@@ -424,8 +397,6 @@ const AppContainer = () => {
                 return indexA - indexB;
             });
 
-
-
             // --- Crear campos dinámicos ---
             const firstProps = geojson.features[0]?.properties || {};
             const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
@@ -436,22 +407,23 @@ const AppContainer = () => {
                 else type = "string";
                 return { name: key, alias: key, type };
             });
-            dynamicFields.push({
-                name: "estadoActual",
-                alias: "Estado Actual",
-                type: "string",
-            });
+
+            // Asegurar que el campo Estado existe
+            if (!dynamicFields.some(f => f.name === "Estado")) {
+                dynamicFields.push({ name: "Estado", alias: "Estado", type: "string" });
+            }
 
             // --- Asignar colores ---
             const estadoAColor = {};
+            const gradiente = generateRedToGreenGradient(estadosUnicos.length);
             estadosUnicos.forEach((estado, i) => {
                 if (estado === "Sin estado") {
                     estadoAColor[estado] = [255, 255, 255, 0.5];
                 } else {
-                    const baseColor = generateColorForIndex(i);
-                    estadoAColor[estado] = [...baseColor, 0.5]; // semitransparente
+                    estadoAColor[estado] = [...gradiente[i], 0.5];
                 }
             });
+
 
             // --- Detectar tipo de geometría ---
             const geomType0 = geojson.features[0]?.geometry?.type;
@@ -464,7 +436,6 @@ const AppContainer = () => {
             const uniqueValueInfos = estadosUnicos.map((estado) => {
                 let symbol;
                 if (estado === "Sin estado") {
-                    // borde negro, sin relleno
                     symbol =
                         geometryType === "point"
                             ? {
@@ -523,7 +494,7 @@ const AppContainer = () => {
                 fields: [...dynamicFields],
                 renderer: {
                     type: "unique-value",
-                    field: "estadoActual",
+                    field: "Estado",
                     defaultSymbol:
                         geometryType === "point"
                             ? {
@@ -615,8 +586,8 @@ const AppContainer = () => {
                             }
                         });
 
-                        // Asignar estadoActual
-                        propsClean.estadoActual = detectarEstado(f);
+                        // Asignar Estado
+                        propsClean.Estado = detectarEstado(f);
 
                         return {
                             geometry,
@@ -625,9 +596,9 @@ const AppContainer = () => {
                     })
                     .filter(Boolean);
 
-                if (batch.length > 0) {
-                    await featureLayer.applyEdits({ addFeatures: batch });
-                }
+                    if (batch.length > 0) {
+                        await featureLayer.applyEdits({ addFeatures: batch });
+                    }
 
                 // Progreso
                 setProgressCurrent((prev) => {
@@ -645,6 +616,7 @@ const AppContainer = () => {
             }
             const layerView = await view.whenLayerView(featureLayer);
 
+            // --- Crear entrada de capa con funciones de actualización ---
             const newEntry = {
                 id: newId,
                 name: nameWithoutExt || `Layer ${newId}`,
@@ -657,7 +629,44 @@ const AppContainer = () => {
                 uniqueValueInfos,
                 estados: estadosUnicos,
                 stateColors: estadoAColor,
+                fechaCampos,
+                etapaCampos,
+                // Funciones de actualización
+                updateFeatureState,
+                batchUpdateFeatureStates,
+                // Función para recalcular estado basado en fechas
+                recalculateState: async (featureId) => {
+                    const query = featureLayer.createQuery();
+                    query.objectIds = [featureId];
+                    const { features } = await featureLayer.queryFeatures(query);
+                
+                    if (!features.length) return;
+                
+                    const feature = features[0];
+                    const originalProps = geojson.features.find(f => 
+                        f.properties?.OBJECTID === featureId || 
+                        f.properties?.FID === featureId
+                    )?.properties || {};
+                
+                    // Combinar propiedades originales con las actualizadas
+                    const combinedProps = { ...originalProps, ...feature.attributes };
+                
+                    // Recalcular estado
+                    const newState = detectarEstado({ properties: combinedProps });
+                
+                    // Actualizar si es diferente
+                    if (feature.attributes.Estado !== newState) {
+                        await updateFeatureState(featureId, newState);
+                    }
+                
+                    return newState;
+                },
+                cleanup: () => {
+                    featureLayer.off("refresh", handleLayerUpdates);
+                    featureLayer.off("edits", handleLayerUpdates);
+                }
             };
+
             setStateColors(estadoAColor);
             setLayers((prev) => [...prev, newEntry]);
 

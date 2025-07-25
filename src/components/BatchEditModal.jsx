@@ -27,6 +27,10 @@ export default function BatchEditModal({
   const [selectedLayerIdx, setSelectedLayerIdx] = useState(
     layersWithSel[0]?.idx ?? 0
   );
+  const [selectedField, setSelectedField] = useState("");
+  const [dateValue, setDateValue] = useState("");
+  const [availableEtapas, setAvailableEtapas] = useState([]);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   // 3) find all Fecha ETnn → num + name field
   const allEtapas = useMemo(() => {
@@ -127,6 +131,83 @@ export default function BatchEditModal({
   // find the **previous** etapa in the list
   const prevEtapa = availableEtapas.find((e) => e.num === selNum - 1);
 
+  // === Función para manejar la aplicación de cambios ===
+  const handleApplyChanges = async () => {
+    if (!selectedField || !dateValue) return;
+    
+    setIsUpdating(true);
+    
+    try {
+      const layerObj = layersWithSel.find(l => l.idx === selectedLayerIdx);
+      if (!layerObj) return;
+        
+      const { entry } = layerObj;
+      const { selectedIds, layer } = entry;
+        
+      // 1. Actualizar las fechas en las features seleccionadas
+      const updates = selectedIds.map(id => ({
+        attributes: {
+          OBJECTID: id,
+          [selectedField]: new Date(dateValue).toISOString()
+        }
+      }));
+        
+      // Aplicar las actualizaciones de fecha
+      await layer.applyEdits({
+        updateFeatures: updates
+      });
+        
+      // 2. Recalcular y actualizar los estados
+      const stateUpdates = [];
+        
+      for (const featureId of selectedIds) {
+        try {
+          // Obtener la feature actualizada
+          const query = layer.createQuery();
+          query.objectIds = [featureId];
+          const { features } = await layer.queryFeatures(query);
+                
+          if (features.length) {
+            const feature = features[0];
+            const props = feature.attributes;
+                    
+            // Encontrar la etapa correspondiente
+            const etapa = allEtapas.find(e => e.field === selectedField);
+            if (!etapa) continue;
+                    
+            // Determinar el nuevo estado
+            const newState = props[etapa.etapaField] || "Sin estado";
+                    
+            if (props.Estado !== newState) {
+              stateUpdates.push({
+                featureId,
+                newState
+                });
+            }
+          }
+        } catch (error) {
+          console.error(`Error processing feature ${featureId}:`, error);
+        }
+      }
+        
+      // Aplicar actualizaciones de estado en lote si hay cambios
+      if (stateUpdates.length > 0) {
+        await entry.batchUpdateFeatureStates(stateUpdates);
+      }
+        
+      // Notificar al componente padre
+      onApply(selectedLayerIdx, selectedField, dateValue);
+        
+    } catch (error) {
+      console.error("Error applying batch edits:", error);
+      alert("Error al aplicar los cambios: " + (error.message || "Error desconocido"));
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // 7) Si no hay nada que mostrar
+  if (!layersWithSel.length || !allEtapas.length) return null;
   // when “Aplicar Hoy” is clicked, stamp current datetime
   const handleApplyToday = () => {
     const nowIso = new Date().toISOString();
@@ -202,7 +283,11 @@ export default function BatchEditModal({
 
           <div style={footer}>
             <button style={cancelBtn} onClick={onCancel}>Cancelar</button>
-            <button style={applyBtn} onClick={handleApplyToday}>Completar</button>
+                      <button style={applyBtn} onClick={handleApplyToday, async () => {
+                          await handleApplyChanges();
+                          onCancel();
+                      }}
+                          disabled={isUpdating || !dateValue}}>{isUpdating ? "Actualizando..." : "Completar"}</button>
           </div>
         </div>
       </div>
