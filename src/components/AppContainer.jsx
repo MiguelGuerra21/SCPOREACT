@@ -354,8 +354,6 @@ const AppContainer = () => {
             }
 
             // --- Detectar campos de fecha dinámicamente ---
-            // --- Detectar campos de fecha dinámicamente ---
-            // --- Función para validar fecha ---
             function esFechaValida(val) {
                 if (val instanceof Date) {
                     return val.getFullYear() >= 1900;
@@ -420,9 +418,7 @@ const AppContainer = () => {
                 });
             });
 
-
             // --- Ordenar estados ---
-            // Creamos una lista de estados en el orden en que aparecen las etapas
             const ordenDinamico = [];
             etapaCampos.forEach((campo) => {
                 geojson.features.forEach((f) => {
@@ -460,6 +456,11 @@ const AppContainer = () => {
                 return { name: key, alias: key, type };
             });
 
+            // Asegurar que el campo Estado existe
+            if (!dynamicFields.some(f => f.name === "Estado")) {
+                dynamicFields.push({ name: "Estado", alias: "Estado", type: "string" });
+            }
+
             // --- Asignar colores ---
             const estadoAColor = {};
             const gradiente = generateRedToGreenGradient(estadosUnicos.length);
@@ -470,6 +471,7 @@ const AppContainer = () => {
                     estadoAColor[estado] = [...gradiente[i], 0.5];
                 }
             });
+
             // --- Detectar tipo de geometría ---
             const geomType0 = geojson.features[0]?.geometry?.type;
             let geometryType = "polygon";
@@ -481,7 +483,6 @@ const AppContainer = () => {
             const uniqueValueInfos = estadosUnicos.map((estado) => {
                 let symbol;
                 if (estado === "Sin estado") {
-                    // borde negro, sin relleno
                     symbol =
                         geometryType === "point"
                             ? {
@@ -522,7 +523,8 @@ const AppContainer = () => {
                 }
                 return { value: estado, symbol, label: estado };
             });
-            // --- Crear FeatureLayer ---
+
+            // --- Crear FeatureLayer con capacidad de actualización ---
             const featureLayer = new FeatureLayer({
                 source: [],
                 objectIdField: "OBJECTID",
@@ -563,6 +565,75 @@ const AppContainer = () => {
                     ],
                 },
             });
+
+            // --- Funciones para actualización en tiempo real ---
+            const updateFeatureState = async (featureId, newState) => {
+                try {
+                    const query = featureLayer.createQuery();
+                    query.objectIds = [featureId];
+                    const { features } = await featureLayer.queryFeatures(query);
+                
+                    if (!features.length) return;
+                
+                    const feature = features[0];
+                
+                    // Actualizar el estado y recalcular la fecha más reciente
+                    const updatedProps = { ...feature.attributes };
+                    updatedProps.Estado = newState;
+                
+                    await featureLayer.applyEdits({
+                        updateFeatures: [{
+                            attributes: updatedProps,
+                            geometry: feature.geometry
+                        }]
+                    });
+                
+                    // Refrescar la vista
+                    const layerView = await view.whenLayerView(featureLayer);
+                    layerView.refresh();
+                
+                } catch (error) {
+                    console.error("Error updating feature state:", error);
+                }
+            };
+
+            const batchUpdateFeatureStates = async (updates) => {
+                try {
+                    const query = featureLayer.createQuery();
+                    query.objectIds = updates.map(u => u.featureId);
+                    const { features } = await featureLayer.queryFeatures(query);
+        
+                    const updateFeatures = features.map(feature => {
+                        const update = updates.find(u => u.featureId === feature.attributes.OBJECTID);
+                        return {
+                            attributes: {
+                                OBJECTID: feature.attributes.OBJECTID,
+                                Estado: update.newState
+                            },
+                            geometry: feature.geometry
+                        };
+                    });
+        
+                    // Aplicar los cambios y devolver el resultado
+                    const result = await featureLayer.applyEdits({
+                        updateFeatures
+                    });
+        
+                    // No intentar refrescar manualmente - ArcGIS maneja esto automáticamente
+                    return {
+                        success: true,
+                        updatedCount: result.updateFeatureResults?.length || 0
+                    };
+                } catch (error) {
+                    console.error("Error batch updating feature states:", error);
+                    return {
+                        success: false,
+                        error: error.message
+                    };
+                }
+            };
+
+            // --- Cargar features al mapa ---
             setLoadingMessage("Agregando features al mapa ");
             view.map.add(featureLayer);
             await featureLayer.when();
@@ -604,9 +675,9 @@ const AppContainer = () => {
                     })
                     .filter(Boolean);
 
-                if (batch.length > 0) {
-                    await featureLayer.applyEdits({ addFeatures: batch });
-                }
+                    if (batch.length > 0) {
+                        await featureLayer.applyEdits({ addFeatures: batch });
+                    }
 
                 // Progreso
                 setProgressCurrent((prev) => {
@@ -624,6 +695,7 @@ const AppContainer = () => {
             }
             const layerView = await view.whenLayerView(featureLayer);
 
+            // --- Crear entrada de capa con funciones de actualización ---
             const newEntry = {
                 id: newId,
                 name: nameWithoutExt || `Layer ${newId}`,
@@ -636,7 +708,40 @@ const AppContainer = () => {
                 uniqueValueInfos,
                 estados: estadosUnicos,
                 stateColors: estadoAColor,
+                fechaCampos,
+                etapaCampos,
+                // Funciones de actualización
+                updateFeatureState,
+                batchUpdateFeatureStates,
+                // Función para recalcular estado basado en fechas
+                recalculateState: async (featureId) => {
+                    const query = featureLayer.createQuery();
+                    query.objectIds = [featureId];
+                    const { features } = await featureLayer.queryFeatures(query);
+                
+                    if (!features.length) return;
+                
+                    const feature = features[0];
+                    const originalProps = geojson.features.find(f => 
+                        f.properties?.OBJECTID === featureId || 
+                        f.properties?.FID === featureId
+                    )?.properties || {};
+                
+                    // Combinar propiedades originales con las actualizadas
+                    const combinedProps = { ...originalProps, ...feature.attributes };
+                
+                    // Recalcular estado
+                    const newState = detectarEstado({ properties: combinedProps });
+                
+                    // Actualizar si es diferente
+                    if (feature.attributes.Estado !== newState) {
+                        await updateFeatureState(featureId, newState);
+                    }
+                
+                    return newState;
+                }
             };
+
             setStateColors(estadoAColor);
             setLayers((prev) => [...prev, newEntry]);
 
@@ -652,11 +757,6 @@ const AppContainer = () => {
         }
     };
 
-
-
-
-
-
     // ----- Handler para cuando se seleccionan archivos en el input -----
     const handleFileLoad = async (files) => {
         setLoading(true);
@@ -668,7 +768,6 @@ const AppContainer = () => {
         }
         setLoading(false);
     };
-
 
     const exportLayerAsShapefile = async (entry) => {
         const { layer, name } = entry;
@@ -1063,7 +1162,10 @@ const AppContainer = () => {
                 <BatchEditModal
                     layers={layers}
                     onCancel={() => setBatchEditOpen(false)}
-                    onApply={handleBatchEditApply}
+                    onApply={(layerIdx, field, date) => {
+                        // Puedes mantener esta lógica si necesitas hacer algo adicional
+                        console.log("Cambios aplicados", layerIdx, field, date);
+                    }}
                 />
             )}
 

@@ -23,6 +23,7 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
   const [selectedField, setSelectedField] = useState("");
   const [dateValue, setDateValue] = useState("");
   const [availableEtapas, setAvailableEtapas] = useState([]);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   // 3) Todas las "Fecha ETnn" → { field, etapaNum, label }
   const allEtapas = useMemo(() => {
@@ -137,6 +138,81 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
       .catch(() => setDateValue(""));
   }, [selectedLayerIdx, selectedField, layersWithSel]);
 
+  // === Función para manejar la aplicación de cambios ===
+  const handleApplyChanges = async () => {
+    if (!selectedField || !dateValue) return;
+    
+    setIsUpdating(true);
+    
+    try {
+      const layerObj = layersWithSel.find(l => l.idx === selectedLayerIdx);
+      if (!layerObj) return;
+        
+      const { entry } = layerObj;
+      const { selectedIds, layer } = entry;
+        
+      // 1. Actualizar las fechas en las features seleccionadas
+      const updates = selectedIds.map(id => ({
+        attributes: {
+          OBJECTID: id,
+          [selectedField]: new Date(dateValue).toISOString()
+        }
+      }));
+        
+      // Aplicar las actualizaciones de fecha
+      await layer.applyEdits({
+        updateFeatures: updates
+      });
+        
+      // 2. Recalcular y actualizar los estados
+      const stateUpdates = [];
+        
+      for (const featureId of selectedIds) {
+        try {
+          // Obtener la feature actualizada
+          const query = layer.createQuery();
+          query.objectIds = [featureId];
+          const { features } = await layer.queryFeatures(query);
+                
+          if (features.length) {
+            const feature = features[0];
+            const props = feature.attributes;
+                    
+            // Encontrar la etapa correspondiente
+            const etapa = allEtapas.find(e => e.field === selectedField);
+            if (!etapa) continue;
+                    
+            // Determinar el nuevo estado
+            const newState = props[etapa.etapaField] || "Sin estado";
+                    
+            if (props.Estado !== newState) {
+              stateUpdates.push({
+                featureId,
+                newState
+                });
+            }
+          }
+        } catch (error) {
+          console.error(`Error processing feature ${featureId}:`, error);
+        }
+      }
+        
+      // Aplicar actualizaciones de estado en lote si hay cambios
+      if (stateUpdates.length > 0) {
+        await entry.batchUpdateFeatureStates(stateUpdates);
+      }
+        
+      // Notificar al componente padre
+      onApply(selectedLayerIdx, selectedField, dateValue);
+        
+    } catch (error) {
+      console.error("Error applying batch edits:", error);
+      alert("Error al aplicar los cambios: " + (error.message || "Error desconocido"));
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   // 7) Si no hay nada que mostrar
   if (!layersWithSel.length || !allEtapas.length) return null;
 
@@ -222,9 +298,23 @@ export default function BatchEditModal({ layers, onCancel, onApply }) {
               onClick={onCancel}
             >Cancelar</button>
             <button
-              style={{ padding: "8px 16px", backgroundColor: "#28a745", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" }}
-              onClick={() => onApply(selectedLayerIdx, selectedField, dateValue)}
-            >Aplicar</button>
+              style={{ 
+                padding: "8px 16px", 
+                backgroundColor: "#28a745", 
+                color: "#fff", 
+                border: "none", 
+                borderRadius: 4, 
+                cursor: "pointer",
+                opacity: isUpdating ? 0.7 : 1
+              }}
+              onClick={async () => {
+                        await handleApplyChanges();
+                        onCancel();
+                      }}
+              disabled={isUpdating || !dateValue}
+            >
+              {isUpdating ? "Actualizando..." : "Aplicar"}
+            </button>
           </div>
         </div>
       </div>
