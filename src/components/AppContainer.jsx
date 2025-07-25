@@ -514,7 +514,6 @@ const AppContainer = () => {
                     // genera un identificador sin espacios:
                     exprName: f.name.replace(/\s+/g, "_")
                 }));
-            console.log("Fecha fields:", fechaFields);
             // --- Crear FeatureLayer ---
             const featureLayer = new FeatureLayer({
                 source: [],
@@ -583,8 +582,6 @@ const AppContainer = () => {
                         })
                     }]
                 }
-
-
 
             });
             setLoadingMessage("Agregando features al mapa ");
