@@ -265,45 +265,47 @@ const AppContainer = () => {
 
         const newId = layerIdRef.current++;
         const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-        if (layersRef.current.some((e) => e.name === nameWithoutExt)) {
+
+        // Verificar duplicados usando un Set para mejor performance
+        const layerNames = new Set(layersRef.current.map(layer => layer.name));
+        if (layerNames.has(nameWithoutExt)) {
             window.alert("No puedes cargar dos veces la misma capa");
             return;
         }
 
+        // Estado de carga
         setLoading(true);
         setProgress(0);
         setProgressCurrent(0);
         setProgressTotal(0);
 
         try {
-            setLoadingMessage("Descomprimiendo archivo ZIP ");
+            //Procesamiento inicial del archivo
+            setLoadingMessage("Descomprimiendo archivo ZIP");
             const arrayBuffer = await file.arrayBuffer();
             const zip = await JSZip.loadAsync(arrayBuffer);
 
-            setLoadingMessage("Leyendo archivos ");
-            const fileNames = Object.keys(zip.files);
-            const hasPrj = fileNames.some((name) =>
+            setLoadingMessage("Validando archivos");
+            const hasPrj = Object.keys(zip.files).some(name => 
                 name.toLowerCase().endsWith(".prj")
             );
             if (!hasPrj) {
                 window.alert(
                     "No se puede mostrar una capa no geolocalizada junto a las localizadas"
                 );
-                setLoading(false);
                 return;
             }
 
+            //Parsear el shapefile
             setLoadingMessage("Parseando shapefile y construyendo features ");
             const geojson = await shpjs(arrayBuffer);
-            if (!geojson || !geojson.features?.length) {
-                console.warn("No valid features found in shapefile:", file.name);
-                setLoading(false);
+
+            if (!geojson?.features?.length) {
+                console.warn("No se encontraron features válidas en el shapefile:", file.name);
                 return;
             }
 
             // --- Detectar campos de fecha dinámicamente ---
-            // --- Detectar campos de fecha dinámicamente ---
-            // --- Función para validar fecha ---
             function esFechaValida(val) {
                 if (val instanceof Date) {
                     return val.getFullYear() >= 1900;
@@ -368,9 +370,7 @@ const AppContainer = () => {
                 });
             });
 
-
             // --- Ordenar estados ---
-            // Creamos una lista de estados en el orden en que aparecen las etapas
             const ordenDinamico = [];
             etapaCampos.forEach((campo) => {
                 geojson.features.forEach((f) => {
@@ -408,6 +408,11 @@ const AppContainer = () => {
                 return { name: key, alias: key, type };
             });
 
+            // Asegurar que el campo Estado existe
+            if (!dynamicFields.some(f => f.name === "Estado")) {
+                dynamicFields.push({ name: "Estado", alias: "Estado", type: "string" });
+            }
+
             // --- Asignar colores ---
             const estadoAColor = {};
             const gradiente = generateRedToGreenGradient(estadosUnicos.length);
@@ -418,6 +423,7 @@ const AppContainer = () => {
                     estadoAColor[estado] = [...gradiente[i], 0.5];
                 }
             });
+
 
             // --- Detectar tipo de geometría ---
             const geomType0 = geojson.features[0]?.geometry?.type;
@@ -430,7 +436,6 @@ const AppContainer = () => {
             const uniqueValueInfos = estadosUnicos.map((estado) => {
                 let symbol;
                 if (estado === "Sin estado") {
-                    // borde negro, sin relleno
                     symbol =
                         geometryType === "point"
                             ? {
@@ -594,9 +599,9 @@ const AppContainer = () => {
                     })
                     .filter(Boolean);
 
-                if (batch.length > 0) {
-                    await featureLayer.applyEdits({ addFeatures: batch });
-                }
+                    if (batch.length > 0) {
+                        await featureLayer.applyEdits({ addFeatures: batch });
+                    }
 
                 // Progreso
                 setProgressCurrent((prev) => {
@@ -614,6 +619,7 @@ const AppContainer = () => {
             }
             const layerView = await view.whenLayerView(featureLayer);
 
+            // --- Crear entrada de capa con funciones de actualización ---
             const newEntry = {
                 id: newId,
                 name: nameWithoutExt || `Layer ${newId}`,
@@ -626,7 +632,44 @@ const AppContainer = () => {
                 uniqueValueInfos,
                 estados: estadosUnicos,
                 stateColors: estadoAColor,
+                fechaCampos,
+                etapaCampos,
+                // Funciones de actualización
+                updateFeatureState,
+                batchUpdateFeatureStates,
+                // Función para recalcular estado basado en fechas
+                recalculateState: async (featureId) => {
+                    const query = featureLayer.createQuery();
+                    query.objectIds = [featureId];
+                    const { features } = await featureLayer.queryFeatures(query);
+                
+                    if (!features.length) return;
+                
+                    const feature = features[0];
+                    const originalProps = geojson.features.find(f => 
+                        f.properties?.OBJECTID === featureId || 
+                        f.properties?.FID === featureId
+                    )?.properties || {};
+                
+                    // Combinar propiedades originales con las actualizadas
+                    const combinedProps = { ...originalProps, ...feature.attributes };
+                
+                    // Recalcular estado
+                    const newState = detectarEstado({ properties: combinedProps });
+                
+                    // Actualizar si es diferente
+                    if (feature.attributes.Estado !== newState) {
+                        await updateFeatureState(featureId, newState);
+                    }
+                
+                    return newState;
+                },
+                cleanup: () => {
+                    featureLayer.off("refresh", handleLayerUpdates);
+                    featureLayer.off("edits", handleLayerUpdates);
+                }
             };
+
             setStateColors(estadoAColor);
             setLayers((prev) => [...prev, newEntry]);
 
