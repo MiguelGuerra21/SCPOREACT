@@ -51,7 +51,6 @@ export default function BatchEditModal({
   }, [layersWithSel, selectedLayerIdx]);
 
   // 4) load the attributes of the first selected feature
-  const [availableEtapas, setAvailableEtapas] = useState([]);
   useEffect(() => {
     const lw = layersWithSel.find((l) => l.idx === selectedLayerIdx);
     if (!lw || allEtapas.length === 0) {
@@ -283,11 +282,7 @@ export default function BatchEditModal({
 
           <div style={footer}>
             <button style={cancelBtn} onClick={onCancel}>Cancelar</button>
-                      <button style={applyBtn} onClick={handleApplyToday, async () => {
-                          await handleApplyChanges();
-                          onCancel();
-                      }}
-                          disabled={isUpdating || !dateValue}}>{isUpdating ? "Actualizando..." : "Completar"}</button>
+            <button style={applyBtn} onClick={handleApplyToday}>Completar</button>
           </div>
         </div>
       </div>

@@ -244,10 +244,8 @@ const LayerPanel = ({
   >
         {layers.map((entry) => {
           const isOpenLayer = openDetails === entry.id;
-          const estadosRaw = layerStates[entry.id]?.estados || [];
-          const estados = ["Sin estado"].concat(estadosRaw.filter(e => e !== "Sin estado"));
-          const conteos = layerStates[entry.id]?.conteos || {};
-          const porcentajes = layerStates[entry.id]?.porcentajes || {};
+            const { estados, conteos, porcentajes, stateColors } = getCurrentStats(entry.id);
+            const estadosOrdenados = ["Sin estado"].concat(estados.filter(e => e !== "Sin estado"));
 
             return (
               <div key={entry.id} style={layerItemStyle}>

@@ -164,7 +164,6 @@ const AppContainer = () => {
             }
         } catch (err) {
             console.error(err);
-            window.alert("Error al eliminar fecha: " + err.message);
         }
 
         // force repaint
@@ -555,6 +554,85 @@ const AppContainer = () => {
                 }
 
             });
+            // --- Configurar eventos para esta capa específica ---
+        const handleLayerUpdates = () => {
+            setLayers(prev => prev.map(layer => {
+            if (layer.id === newId) {
+                return { ...layer, version: (layer.version || 0) + 1 };
+            }
+            return layer;
+            }));
+        };
+ 
+        featureLayer.on("refresh", handleLayerUpdates);
+        featureLayer.on("edits", handleLayerUpdates);
+ 
+            // --- Funciones para actualización en tiempo real ---
+            const updateFeatureState = async (featureId, newState) => {
+                try {
+                    const query = featureLayer.createQuery();
+                    query.objectIds = [featureId];
+                    const { features } = await featureLayer.queryFeatures(query);
+               
+                    if (!features.length) return;
+               
+                    const feature = features[0];
+               
+                    // Actualizar el estado y recalcular la fecha más reciente
+                    const updatedProps = { ...feature.attributes };
+                    updatedProps.Estado = newState;
+               
+                    await featureLayer.applyEdits({
+                        updateFeatures: [{
+                            attributes: updatedProps,
+                            geometry: feature.geometry
+                        }]
+                    });
+               
+                    // Refrescar la vista
+                    const layerView = await view.whenLayerView(featureLayer);
+                    layerView.refresh();
+               
+                } catch (error) {
+                    console.error("Error updating feature state:", error);
+                }
+            };
+ 
+            const batchUpdateFeatureStates = async (updates) => {
+                try {
+                    const query = featureLayer.createQuery();
+                    query.objectIds = updates.map(u => u.featureId);
+                    const { features } = await featureLayer.queryFeatures(query);
+       
+                    const updateFeatures = features.map(feature => {
+                        const update = updates.find(u => u.featureId === feature.attributes.OBJECTID);
+                        return {
+                            attributes: {
+                                OBJECTID: feature.attributes.OBJECTID,
+                                Estado: update.newState
+                            },
+                            geometry: feature.geometry
+                        };
+                    });
+       
+                    // Aplicar los cambios y devolver el resultado
+                    const result = await featureLayer.applyEdits({
+                        updateFeatures
+                    });
+       
+                    // No intentar refrescar manualmente - ArcGIS maneja esto automáticamente
+                    return {
+                        success: true,
+                        updatedCount: result.updateFeatureResults?.length || 0
+                    };
+                } catch (error) {
+                    console.error("Error batch updating feature states:", error);
+                    return {
+                        success: false,
+                        error: error.message
+                    };
+                }
+            };
             setLoadingMessage("Agregando features al mapa ");
             view.map.add(featureLayer);
             await featureLayer.when();
@@ -639,26 +717,26 @@ const AppContainer = () => {
                     const query = featureLayer.createQuery();
                     query.objectIds = [featureId];
                     const { features } = await featureLayer.queryFeatures(query);
-                
+               
                     if (!features.length) return;
-                
+               
                     const feature = features[0];
-                    const originalProps = geojson.features.find(f => 
-                        f.properties?.OBJECTID === featureId || 
+                    const originalProps = geojson.features.find(f =>
+                        f.properties?.OBJECTID === featureId ||
                         f.properties?.FID === featureId
                     )?.properties || {};
-                
+               
                     // Combinar propiedades originales con las actualizadas
                     const combinedProps = { ...originalProps, ...feature.attributes };
-                
+               
                     // Recalcular estado
                     const newState = detectarEstado({ properties: combinedProps });
-                
+               
                     // Actualizar si es diferente
                     if (feature.attributes.Estado !== newState) {
                         await updateFeatureState(featureId, newState);
                     }
-                
+               
                     return newState;
                 },
                 cleanup: () => {
@@ -666,10 +744,10 @@ const AppContainer = () => {
                     featureLayer.off("edits", handleLayerUpdates);
                 }
             };
-
+ 
             setStateColors(estadoAColor);
             setLayers((prev) => [...prev, newEntry]);
-
+ 
         } catch (err) {
             console.error("Error procesando shapefile:", file.name, err);
             window.alert("Error al procesar shapefile: " + err.message);
