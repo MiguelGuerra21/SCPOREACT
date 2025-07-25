@@ -1,5 +1,5 @@
 // src/components/LayerPanel.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
 import { FaChevronRight, FaChevronLeft } from "react-icons/fa";
 
@@ -9,140 +9,105 @@ const LayerPanel = ({
   onCenterView,
   onRemoveLayer,
   embedded = false,
-  stateColors = {},
 }) => {
   const [isOpen, setIsOpen] = useState(true);
   const [openDetails, setOpenDetails] = useState(null);
-  const [layerStates, setLayerStates] = useState({}); // Para guardar estados y porcentajes por capa
+  const statsRef = useRef({});
   const isAndroid = Capacitor.getPlatform() === "android";
 
-  // Cada vez que cambian las capas, calculamos estados y porcentajes
-  useEffect(() => {
-    const processLayers = async () => {
-      const newLayerStates = {};
+  // Función para convertir colores a formato CSS
+  const toCssColor = useCallback((color) => {
+    if (!color) return 'transparent';
+    if (Array.isArray(color)) {
+      const [r, g, b, a] = color;
+      return `rgba(${r}, ${g}, ${b}, ${a || 1})`;
+    }
+    return color;
+  }, []);
 
-      for (const entry of layers) {
-        const layer = entry.layer;
-        if (!layer) continue;
+  // Función para obtener el color del borde
+  const getBorderColor = useCallback((color, estado) => {
+    if (estado === "Sin estado") return "#000";
+    if (Array.isArray(color)) {
+      const [r, g, b] = color;
+      return `rgba(${r}, ${g}, ${b}, 1)`;
+    }
+    return color || "#000";
+  }, []);
+
+  // Efecto para calcular y actualizar estadísticas
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    const updateLayerStats = async () => {
+      const updates = {};
+
+      await Promise.all(layers.map(async (entry) => {
+        if (abortController.signal.aborted || !entry.layer) return;
 
         try {
-          // Hacemos query para obtener features con atributos
-          const query = layer.createQuery();
+          // Solo actualizar si la versión cambió
+          const currentVersion = entry.version || 0;
+          if (statsRef.current[entry.id]?.version === currentVersion) return;
+
+          // Consulta optimizada solo para el campo necesario
+          const query = entry.layer.createQuery();
+          query.outFields = ["Estado"];
           query.returnGeometry = false;
-          query.outFields = ["*"];
           query.where = "1=1";
 
-          const result = await layer.queryFeatures(query);
+          const result = await entry.layer.queryFeatures(query);
           const features = result.features;
-
-          // Recoger los nombres de los campos de etapas que contengan fecha (ej: "Fecha ET01", "Fecha ET02", etc)
-          const attrKeys = features.length > 0 ? Object.keys(features[0].attributes) : [];
-          const fechaFields = attrKeys.filter(
-            (k) => k.toLowerCase().startsWith("fecha")
-          );
-
-          // Obtenemos también los campos "Etapa XX" para obtener valores reales
-          const etapaFields = attrKeys.filter((k) =>
-            k.toLowerCase().startsWith("etapa")
-          );
-
-          // Calcular estado actual para cada feature: la última etapa con fecha no vacía
-          // Y tomar el valor real del campo "Etapa XX" asociado a esa etapa
-          const estadoCounts = {}; // Conteo por estado real
-          let total = features.length;
-
-          for (const feat of features) {
-            let ultimaEtapaIndex = -1;
-            for (let i = 0; i < fechaFields.length; i++) {
-              const val = feat.attributes[fechaFields[i]];
-              if (val !== null && val !== undefined && val !== "") {
-                ultimaEtapaIndex = i;
-              }
-            }
-
-            // Obtenemos el valor real de la etapa desde el campo Etapa XX correspondiente
-            // Suponemos que el índice de fechaFields corresponde a etapaFields (mismo orden)
-            // Si no hay campo Etapa XX, fallback a "Sin estado"
-            let estadoReal = "Sin estado";
-            if (etapaFields.length > ultimaEtapaIndex) {
-              const campoEtapa = etapaFields[ultimaEtapaIndex];
-              const valEtapa = feat.attributes[campoEtapa];
-              if (valEtapa !== null && valEtapa !== undefined && valEtapa !== "") {
-                estadoReal = valEtapa.toString();
-              }
-            }
-            // Si no tiene fecha en ninguna etapa, se puede asignar un estado 'Sin estado' o ignorar
-            if (ultimaEtapaIndex === -1) {
-              estadoCounts[estadoReal] = (estadoCounts[estadoReal] || 0) + 1;
-              continue;
-            }
-            estadoCounts[estadoReal] = (estadoCounts[estadoReal] || 0) + 1;
-          }
-
-          // Obtener lista ordenada de estados para mostrar (incluso con 0)
-          // Combinamos con los valores únicos que haya en todas features en los campos etapaFields
-          const valoresUnicos = new Set(["Sin estado"]);
-          for (const feat of features) {
-            etapaFields.forEach((campo) => {
-              const val = feat.attributes[campo];
-              if (val !== null && val !== undefined && val !== "") {
-                valoresUnicos.add(val.toString());
-              }
-            });
-          }
-          const estadosTodos = Array.from(valoresUnicos);
-          // Mover "Sin estado" al final
-          const idxSinEstado = estadosTodos.indexOf("Sin estado");
-          if (idxSinEstado !== -1) {
-            estadosTodos.splice(idxSinEstado, 1);
-            estadosTodos.unshift("Sin estado");
-          }
-          // Para estados sin conteo asignar 0
-          estadosTodos.forEach((e) => {
-            if (!(e in estadoCounts)) estadoCounts[e] = 0;
-          });
-
+          const estados = entry.estados || ["Sin estado"];
+          const conteos = {};
           const porcentajes = {};
-          let totalPorcentajes = 0;
-          const estadosConFeatures = estadosTodos.filter(e => estadoCounts[e] > 0);
 
-          // Paso 1: Calcular porcentajes base (redondeando hacia abajo)
-          estadosTodos.forEach((e) => {
-            if (estadoCounts[e] > 0) {
-              porcentajes[e] = Math.floor((estadoCounts[e] * 100) / total);
-              totalPorcentajes += porcentajes[e];
-            } else {
-              porcentajes[e] = 0;
-            }
+          // Contar estados
+          features.forEach(f => {
+            const estado = f.attributes.Estado || "Sin estado";
+            conteos[estado] = (conteos[estado] || 0) + 1;
           });
 
-          // Paso 2: Repartir el sobrante entre los estados con features
-          let sobrante = 100 - totalPorcentajes;
-          let i = 0;
-          while (sobrante > 0 && estadosConFeatures.length > 0) {
-            const estado = estadosConFeatures[i % estadosConFeatures.length];
-            porcentajes[estado] += 1;
-            sobrante--;
-            i++;
-          }
+          // Calcular porcentajes
+          const total = features.length;
+          estados.forEach(e => {
+            const count = conteos[e] || 0;
+            porcentajes[e] = total > 0 ? Math.round((count / total) * 100) : 0;
+          });
 
-          // Guardamos todo para esta capa
-          newLayerStates[entry.id] = {
-            estados: estadosTodos,
-            conteos: estadoCounts,
+          updates[entry.id] = {
+            version: currentVersion,
+            estados,
+            conteos,
             porcentajes,
+            stateColors: entry.stateColors || {}
           };
         } catch (error) {
-          console.error("Error procesando capa para LayerPanel:", error);
+          console.error(`Error procesando capa ${entry.id}:`, error);
         }
-      }
+      }));
 
-      setLayerStates(newLayerStates);
+      if (!abortController.signal.aborted) {
+        statsRef.current = { ...statsRef.current, ...updates };
+      }
     };
 
-    processLayers();
+    updateLayerStats();
+    
+    return () => abortController.abort();
   }, [layers]);
 
+  // Obtener estadísticas actuales
+  const getCurrentStats = (layerId) => {
+    return statsRef.current[layerId] || {
+      estados: [],
+      conteos: {},
+      porcentajes: {},
+      stateColors: {}
+    };
+  };
+
+  // Estilos del componente
   const containerStyle = embedded
     ? {
         position: "relative",
@@ -200,6 +165,7 @@ const LayerPanel = ({
     cursor: "default",
     borderRadius: 4,
     padding: "4px",
+    backgroundColor: "#f8f9fa",
   };
 
   const topRowStyle = {
@@ -213,6 +179,9 @@ const LayerPanel = ({
     fontSize: 14,
     userSelect: "none",
     cursor: "pointer",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   };
 
   const removeBtnStyle = {
@@ -236,17 +205,14 @@ const LayerPanel = ({
     borderRadius: 4,
     cursor: "pointer",
     transition: "background 0.2s",
+    ":hover": {
+      backgroundColor: "#019875",
+    },
   };
 
   const handleToggleDetails = (id) => {
     setOpenDetails((old) => (old === id ? null : id));
   };
-
-const getColorForState = (state, colores, index) => {
-  if (colores && colores.hasOwnProperty(state) && colores[state] != null) {
-    return colores[state];
-  }
-};
 
   return (
     <div style={containerStyle}>
@@ -267,158 +233,119 @@ const getColorForState = (state, colores, index) => {
             No hay capas cargadas
           </p>
         )}
- {/* CONTENEDOR CON SCROLL */}
-  <div
-    style={{
-      maxHeight: "300px",      
-      overflowY: "auto",        
-      paddingRight: "6px",     
-      marginBottom: "8px",      
-    }}
-  >
-        {layers.map((entry) => {
-          const isOpenLayer = openDetails === entry.id;
-          const estadosRaw = layerStates[entry.id]?.estados || [];
-          const estados = ["Sin estado"].concat(estadosRaw.filter(e => e !== "Sin estado"));
-          const conteos = layerStates[entry.id]?.conteos || {};
-          const porcentajes = layerStates[entry.id]?.porcentajes || {};
-          const total = Object.values(conteos).reduce((a, b) => a + b, 0);
 
-          return (
-            <div key={entry.id} style={layerItemStyle}>
-              <div style={topRowStyle}>
-                <input
-                  type="checkbox"
-                  checked={entry.visible}
-                  readOnly
-                  onClick={() => onToggleVisibility(entry.id)}
-                  style={{ marginRight: 8 }}
-                />
-                <span
-                  style={textStyle}
-                  onClick={() => handleToggleDetails(entry.id)}
-                  title={entry.name}
-                >
-                  {entry.name}
-                </span>
-                <button
-                  style={removeBtnStyle}
-                  onClick={() => onRemoveLayer(entry.id)}
-                  title="Eliminar capa"
-                >
-                  🗑️
-                </button>
-              </div>
+        <div style={{ maxHeight: "300px", overflowY: "auto", paddingRight: "6px", marginBottom: "8px" }}>
+          {layers.map((entry) => {
+            const isOpenLayer = openDetails === entry.id;
+            const { estados, conteos, porcentajes, stateColors } = getCurrentStats(entry.id);
+            const estadosOrdenados = ["Sin estado"].concat(estados.filter(e => e !== "Sin estado"));
 
-              {isOpenLayer && (
-                <div
-                  style={{
+            return (
+              <div key={entry.id} style={layerItemStyle}>
+                <div style={topRowStyle}>
+                  <input
+                    type="checkbox"
+                    checked={entry.visible}
+                    onChange={() => onToggleVisibility(entry.id)}
+                    style={{ marginRight: 8 }}
+                  />
+                  <span
+                    style={textStyle}
+                    onClick={() => handleToggleDetails(entry.id)}
+                    title={entry.name}
+                  >
+                    {entry.name}
+                  </span>
+                  <button
+                    style={removeBtnStyle}
+                    onClick={() => onRemoveLayer(entry.id)}
+                    title="Eliminar capa"
+                  >
+                    🗑️
+                  </button>
+                </div>
+
+                {isOpenLayer && (
+                  <div style={{
                     backgroundColor: "#f9f9f9",
                     border: "1px solid #ddd",
                     borderRadius: 4,
                     padding: "6px 8px",
                     marginTop: 6,
-                    width: "100%",
-                    boxSizing: "border-box",
-                  }}
-                >
-{estados.length === 0 ? (
-  <em style={{ color: "#888" }}>No hay estados detectados</em>
-) : (
-   ["Sin estado"]
-    .concat(estadosRaw.filter(e => e !== "Sin estado"))
-    .map((estado, i) => {
-      const pct = porcentajes[estado] || 0;
-      const toCssColor = (color) => {
-         if (Array.isArray(color)) {
-          const [r, g, b, a] = color;
-          return `rgba(${r}, ${g}, ${b}, ${a})`;
-        }
-        return color || "transparent"; 
-      };
-      const getBorderColorForState = (color, estado) => {
-        if (estado === "Sin estado") return "#000"; // borde negro fijo
-        if (Array.isArray(color)) {
-          const [r, g, b] = color;
-          return `rgba(${r}, ${g}, ${b}, 1)`; 
-        }
-          if (color.startsWith("rgba")) {
-          const [r, g, b] = color.match(/\d+/g).map(Number);
-          return `rgba(${r}, ${g}, ${b}, 1)`;
-        }
-        return color; 
-      };
-      const color = getColorForState(estado, entry.stateColors, i);
-      const borderColor = getBorderColorForState(color, estado);
-                      return (
-                        <div
-                          key={estado}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            padding: "2px 0",
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            cursor: "default",
-                          }}
-                          title={`${estado}: ${pct}% (${conteos[estado] || 0})`}
-                        >
-                          <span
+                  }}>
+                    {estadosOrdenados.length === 0 ? (
+                      <em style={{ color: "#888" }}>No hay estados detectados</em>
+                    ) : (
+                      estadosOrdenados.map((estado) => {
+                        const color = stateColors[estado];
+                        const borderColor = getBorderColor(color, estado);
+                        const pct = porcentajes[estado] || 0;
+                        const count = conteos[estado] || 0;
+
+                        return (
+                          <div
+                            key={estado}
                             style={{
-                              display: "inline-block",
-                              width: 12,
-                              height: 12,
-                              marginRight: 6,
-                              backgroundColor: toCssColor(color),
-                              border: `3px solid ${borderColor}`,
-                              borderRadius: 2,
-                              flexShrink: 0,
-                            }}
-                          />
-                          <span
-                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              padding: "2px 0",
                               overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              flexGrow: 1,
                             }}
+                            title={`${estado}: ${pct}% (${count})`}
                           >
-                            {estado}
-                          </span>
-                          <span
-                            style={{
-                              marginLeft: 8,
-                              flexShrink: 0,
-                              fontWeight: "bold",
-                              color: "#555",
-                              minWidth: 40,
-                              textAlign: "right",
-                              fontVariantNumeric: "tabular-nums",
-                            }}
-                          >
-                            {pct}%
-                          </span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-</div>
+                            <span
+                              style={{
+                                display: "inline-block",
+                                width: 12,
+                                height: 12,
+                                marginRight: 6,
+                                backgroundColor: toCssColor(color),
+                                border: `3px solid ${borderColor}`,
+                                borderRadius: 2,
+                                flexShrink: 0,
+                              }}
+                            />
+                            <span
+                              style={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                flexGrow: 1,
+                                fontSize: 13,
+                              }}
+                            >
+                              {estado}
+                            </span>
+                            <span
+                              style={{
+                                marginLeft: 8,
+                                flexShrink: 0,
+                                fontWeight: "bold",
+                                color: "#555",
+                                minWidth: 40,
+                                textAlign: "right",
+                                fontSize: 13,
+                              }}
+                            >
+                              {pct}%
+                            </span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
         {layers.length > 0 && (
           <button
             style={centerBtnStyle}
             onClick={onCenterView}
-            onMouseEnter={(e) =>
-               (e.currentTarget.style.background = "#019875")
-              }
-            onMouseLeave={(e) => 
-              (e.currentTarget.style.background = "#00b894")
-            }
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#019875")}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#00b894")}
           >
             Centrar vista
           </button>
@@ -428,4 +355,4 @@ const getColorForState = (state, colores, index) => {
   );
 };
 
-export default LayerPanel;
+export default React.memo(LayerPanel);

@@ -196,23 +196,6 @@ const AppContainer = () => {
   setBatchEditOpen(false);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     // Sincronizar layersRef.current siempre que cambie layers
     useEffect(() => {
         layersRef.current = layers;
@@ -317,39 +300,43 @@ const AppContainer = () => {
 
         const newId = layerIdRef.current++;
         const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-        if (layersRef.current.some((e) => e.name === nameWithoutExt)) {
+
+        // Verificar duplicados usando un Set para mejor performance
+        const layerNames = new Set(layersRef.current.map(layer => layer.name));
+        if (layerNames.has(nameWithoutExt)) {
             window.alert("No puedes cargar dos veces la misma capa");
             return;
         }
 
+        // Estado de carga
         setLoading(true);
         setProgress(0);
         setProgressCurrent(0);
         setProgressTotal(0);
 
         try {
-            setLoadingMessage("Descomprimiendo archivo ZIP ");
+            //Procesamiento inicial del archivo
+            setLoadingMessage("Descomprimiendo archivo ZIP");
             const arrayBuffer = await file.arrayBuffer();
             const zip = await JSZip.loadAsync(arrayBuffer);
 
-            setLoadingMessage("Leyendo archivos ");
-            const fileNames = Object.keys(zip.files);
-            const hasPrj = fileNames.some((name) =>
+            setLoadingMessage("Validando archivos");
+            const hasPrj = Object.keys(zip.files).some(name => 
                 name.toLowerCase().endsWith(".prj")
             );
             if (!hasPrj) {
                 window.alert(
                     "No se puede mostrar una capa no geolocalizada junto a las localizadas"
                 );
-                setLoading(false);
                 return;
             }
 
+            //Parsear el shapefile
             setLoadingMessage("Parseando shapefile y construyendo features ");
             const geojson = await shpjs(arrayBuffer);
-            if (!geojson || !geojson.features?.length) {
-                console.warn("No valid features found in shapefile:", file.name);
-                setLoading(false);
+
+            if (!geojson?.features?.length) {
+                console.warn("No se encontraron features válidas en el shapefile:", file.name);
                 return;
             }
 
@@ -565,6 +552,18 @@ const AppContainer = () => {
                     ],
                 },
             });
+        // --- Configurar eventos para esta capa específica ---
+        const handleLayerUpdates = () => {
+            setLayers(prev => prev.map(layer => {
+            if (layer.id === newId) {
+                return { ...layer, version: (layer.version || 0) + 1 };
+            }
+            return layer;
+            }));
+        };
+
+        featureLayer.on("refresh", handleLayerUpdates);
+        featureLayer.on("edits", handleLayerUpdates);
 
             // --- Funciones para actualización en tiempo real ---
             const updateFeatureState = async (featureId, newState) => {
@@ -739,6 +738,10 @@ const AppContainer = () => {
                     }
                 
                     return newState;
+                },
+                cleanup: () => {
+                    featureLayer.off("refresh", handleLayerUpdates);
+                    featureLayer.off("edits", handleLayerUpdates);
                 }
             };
 
