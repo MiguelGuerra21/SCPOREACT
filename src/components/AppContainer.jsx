@@ -46,33 +46,18 @@ const AppContainer = () => {
     const fileInputRef = useRef(null);
 
 
-    async function handleBatchEditApply(
-        layerIndex,    // índice en el array `layers`
-        fieldName,     // p.ej. "Fecha ET03"
-        newValueRaw    // "YYYY-MM-DD"
-    ) {
-        // --- 1) Entrada y validaciones iniciales ---
+    async function handleBatchEditApply(layerIndex, fieldName) {
         const entry = layers[layerIndex];
-        if (!entry) {
-            window.alert("Error interno: capa no encontrada.");
-            return;
-        }
+        if (!entry) { window.alert("Capa no encontrada"); return; }
         const { layer, selectedIds } = entry;
-        if (!selectedIds?.length) {
-            window.alert("No hay features seleccionadas en la capa.");
-            setBatchEditOpen(false);
-            return;
-        }
+        if (!selectedIds?.length) { window.alert("Nada seleccionado"); setBatchEditOpen(false); return; }
 
-        // --- 2) Extraer número de etapa (ETnn) ---
+        // 1) Extraer número de etapa
         const m = fieldName.match(/ET\s*0*?(\d+)$/i);
         const selNum = m ? parseInt(m[1], 10) : null;
-        if (selNum == null) {
-            window.alert(`Nombre de campo inválido: ${fieldName}`);
-            return;
-        }
+        if (selNum == null) { window.alert("Campo inválido"); return; }
 
-        // --- 3) Listar todos los campos "Fecha ETnn" <= etapa seleccionada ---
+        // 2) Lista de todos los "Fecha ETnn" <= selNum
         const allFecha = layer.fields
             .filter(f => {
                 const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
@@ -80,106 +65,120 @@ const AppContainer = () => {
             })
             .map(f => ({
                 name: f.name,
-                type: f.type,
+                type: f.type,             // fecha, string, datetime, etc.
                 num: parseInt(f.name.match(/\d+$/)[0], 10)
             }));
-        if (!allFecha.length) {
-            window.alert("No se encontraron campos Fecha ET.");
-            return;
-        }
+        if (!allFecha.length) { window.alert("No hay campos Fecha ET"); return; }
 
-        // --- 4) Validar la nueva fecha ---
-        if (!newValueRaw) {
-            window.alert("Selecciona una fecha.");
-            return;
-        }
-        const d = new Date(newValueRaw);
-        if (isNaN(d)) {
-            window.alert("Formato de fecha inválido.");
-            return;
-        }
-        const epoch = d.getTime();
+        // 3) Calcular "Madrid" ahora y medianoche Madrid
+        // 3a) Fecha pura
+        const madridDate = new Intl.DateTimeFormat("sv-SE", {
+            timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit"
+        }).format(new Date());                  // "2025-07-24"
+        // 3b) Fecha+hora sin T
+        const parts = new Intl.DateTimeFormat("sv-SE", {
+            timeZone: "Europe/Madrid",
+            year: "numeric", month: "2-digit", day: "2-digit",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+            hour12: false
+        }).formatToParts(new Date());
+        const obj = Object.fromEntries(parts.map(p => [p.type, p.value]));
+        const madridDateTime = `${obj.year}-${obj.month}-${obj.day} ${obj.hour}:${obj.minute}:${obj.second}`;
+        // 3c) epoch de medianoche
+        const epochMidnight = Date.parse(`${madridDate}T00:00:00`);
 
-        // --- 5) Leer valores actuales ---
-        const where = selectedIds.map(id => `OBJECTID = ${id}`).join(" OR ");
+        // 4) Leer valores actuales
         const q = layer.createQuery();
-        q.where = where;
-        q.outFields = ["*"]; // todos los campos
+        q.objectIds = selectedIds;
+        q.outFields = allFecha.map(f => f.name);
         q.returnGeometry = false;
         const res = await layer.queryFeatures(q);
         const beforeMap = {};
-        res.features.forEach(feat => {
-            beforeMap[feat.attributes.OBJECTID] = feat.attributes;
-        });
-        console.log("ANTES de editar (map):", beforeMap);
+        res.features.forEach(feat => beforeMap[feat.attributes.OBJECTID] = feat.attributes);
 
-        // --- 6) Preparar updates respetando la lógica ---
-        const updates = selectedIds
-            .map(oid => {
-                const prev = beforeMap[oid] || {};
-                const attrs = { OBJECTID: oid };
+        // 5) Construir updates
+        const updates = selectedIds.map(oid => {
+            const prev = beforeMap[oid] || {};
+            const attrs = { OBJECTID: oid };
 
-                allFecha.forEach(f => {
-                    // ¿Tenía valor previo?
-                    const had = prev[f.name];
-                    const nonEmpty = had != null && String(had).trim() !== "";
+            allFecha.forEach(f => {
+                const had = prev[f.name];
+                const nonEmpty = had != null && String(had).trim() !== "";
 
-                    if (f.num === selNum) {
-                        // ❗ Siempre sobreescribo la etapa seleccionada
-                        attrs[f.name] = f.type === "date" ? epoch : newValueRaw;
-                    } else if (!nonEmpty) {
-                        // ✅ Relleno solo si estaba vacío
-                        attrs[f.name] = f.type === "date" ? epoch : newValueRaw;
+                if (f.num === selNum || !nonEmpty) {
+                    // selected siempre, y backfill solo si vacíos
+                    if (f.type === "date") {
+                        attrs[f.name] = epochMidnight;
+                    } else {
+                        attrs[f.name] = madridDateTime;
                     }
-                    //Log de los atributos que se actualizarán
-                    console.log(
-                        `OID ${oid} – campo ${f.name} – prev=`,
-                        had,
-                        "nonEmpty?",
-                        nonEmpty,
-                        "overwrite selected?",
-                        f.num === selNum
-                    );
-                });
+                }
+            });
 
-                return Object.keys(attrs).length > 1 ? { attributes: attrs } : null;
-            })
-            .filter(u => u);
+            return Object.keys(attrs).length > 1 ? { attributes: attrs } : null;
+        }).filter(u => u);
 
-        if (!updates.length) {
-            window.alert("No hay campos vacíos ni seleccionada para actualizar.");
-            return;
+        if (!updates.length) { window.alert("Nada que actualizar"); return; }
+
+        // 6) Aplicar cambios
+        try {
+            const result = await layer.applyEdits({ updateFeatures: updates });
+            const fails = result.updateFeaturesResults?.filter(r => !r.success) || [];
+            if (fails.length) window.alert("Algunas no se actualizaron");
+        } catch (err) {
+            console.error(err);
         }
 
-        // --- 7) Ejecutar edits ---
-        const result = await layer.applyEdits({ updateFeatures: updates });
-        if (result.updateFeaturesResults) {
-            const fails = result.updateFeaturesResults.filter(r => !r.success);
-            if (fails.length) {
-                console.error("Errores al actualizar:", fails);
-                window.alert("Algunas entidades no pudieron actualizarse.");
-            }
-        }
+        // 7) Forzar repaint
+        entry.layerView?.refresh?.();
 
-        // --- 8) Forzar redraw y refrescar popup si está abierto ---
-        const view = viewRef.current;
-        if (view?.requestRender) view.requestRender();
-        else { layer.visible = false; layer.visible = true; }
-        if (view?.popup.open) {
-            const selFeat = view.popup.selectedFeature;
-            if (selFeat && selectedIds.includes(selFeat.attributes.OBJECTID)) {
-                const loc = view.popup.location;
-                view.popup.close();
-                view.popup.open({ features: [selFeat], location: loc });
-            }
-        }
-
-        // --- 9) Aviso al usuario ---
-        window.alert(
-            `Se actualizaron ${updates.length} feature(s) en "${entry.name}".`
-        );
+        // 8) Cerrar modal
         setBatchEditOpen(false);
     }
+
+
+
+
+
+    async function handleClearEtapa(layerIdx, dateField) {
+        const entry = layers[layerIdx];
+        if (!entry) return window.alert("Capa no encontrada");
+
+        const { layer, selectedIds } = entry;
+        if (!selectedIds?.length) {
+            return window.alert("No hay features seleccionadas");
+        }
+
+        // Build a single update that sets that dateField to null/""
+        const updates = selectedIds.map(oid => ({
+            attributes: {
+                OBJECTID: oid,
+                [dateField]: null  // or "" if you prefer string
+            }
+        }));
+
+        try {
+            const result = await layer.applyEdits({ updateFeatures: updates });
+            if (result.updateFeaturesResults.some(r => !r.success)) {
+                window.alert("Algunas fechas no pudieron eliminarse.");
+            }
+        } catch (err) {
+            console.error(err);
+            window.alert("Error al eliminar fecha: " + err.message);
+        }
+
+        // force repaint
+        if (entry.layer.renderer) {
+            entry.layer.renderer = entry.layer.renderer.clone();
+        }
+
+        // close & reopen the modal so it re‑queries and greys out correctly
+        setBatchEditOpen(false);
+        setTimeout(() => setBatchEditOpen(true), 0);
+    }
+
+
+
 
     // Sincronizar layersRef.current siempre que cambie layers
     useEffect(() => {
@@ -453,6 +452,7 @@ const AppContainer = () => {
                     estadoAColor[estado] = [...baseColor, 0.5]; // semitransparente
                 }
             });
+
             // --- Detectar tipo de geometría ---
             const geomType0 = geojson.features[0]?.geometry?.type;
             let geometryType = "polygon";
@@ -505,6 +505,16 @@ const AppContainer = () => {
                 }
                 return { value: estado, symbol, label: estado };
             });
+            // 1) Filtra sólo los campos que empiezan por "Fecha "
+            const fechaFields = dynamicFields
+                .filter(f => f.name.startsWith("Fecha "))
+                .map(f => ({
+                    originalName: f.name,
+                    alias: f.alias,
+                    // genera un identificador sin espacios:
+                    exprName: f.name.replace(/\s+/g, "_")
+                }));
+            console.log("Fecha fields:", fechaFields);
             // --- Crear FeatureLayer ---
             const featureLayer = new FeatureLayer({
                 source: [],
@@ -533,18 +543,49 @@ const AppContainer = () => {
                                 },
                     uniqueValueInfos,
                 },
+
+
                 popupTemplate: {
                     title: `${nameWithoutExt} - ID: {fid}`,
-                    content: [
-                        {
-                            type: "fields",
-                            fieldInfos: dynamicFields.map((f) => ({
+
+                    // 2) Para cada "Fecha …" definimos una expresión Arcade
+                    expressionInfos: fechaFields.map(f => ({
+                        name: f.exprName,
+                        title: f.alias,
+                        expression: `
+      var v = $feature["${f.originalName}"];
+      if (IsEmpty(v)) {
+        return "";
+      }
+      // forzamos a Date incluso si viene como string
+      var dt = Date(v);
+      // formatea día/mes/año y hora:minuto:segundo
+      return Text(dt, 'DD/MM/YYYY HH:mm:ss');
+    `
+                    })),
+
+                    content: [{
+                        type: "fields",
+                        fieldInfos: dynamicFields.map(f => {
+                            // si es un campo "Fecha …" usamos la expresión en lugar de f.name
+                            const fecha = fechaFields.find(x => x.originalName === f.name);
+                            if (fecha) {
+                                return {
+                                    fieldName: `expression/${fecha.exprName}`,
+                                    label: f.alias
+                                };
+                            }
+                            // resto de campos normales
+                            return {
                                 fieldName: f.name,
-                                label: f.alias,
-                            })),
-                        },
-                    ],
-                },
+                                label: f.alias
+                            };
+                        })
+                    }]
+                }
+
+
+
             });
             setLoadingMessage("Agregando features al mapa ");
             view.map.add(featureLayer);
@@ -1025,6 +1066,7 @@ const AppContainer = () => {
                     layers={layers}
                     onCancel={() => setBatchEditOpen(false)}
                     onApply={handleBatchEditApply}
+                    onClearEtapa={handleClearEtapa}
                 />
             )}
 
