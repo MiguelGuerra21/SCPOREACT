@@ -109,9 +109,16 @@ export default function BatchEditModal({
     return null;
   }
 
-  // === Función que antes era handleApplyChanges, pero adaptada ===
+  // parse número de la etapa seleccionada y buscar la anterior
+  const selNum = parseInt(
+    selectedEtapaField.match(/\d+$/)?.[0] ?? "",
+    10
+  );
+  const prevEtapa = availableEtapas.find((e) => e.num === selNum - 1);
+
+  // === Función para aplicar cambios ===
   const handleApplyChanges = async () => {
-    if (!selectedEtapaField) return;           // si no hay nada seleccionado, salimos
+    if (!selectedEtapaField) return;
     setIsUpdating(true);
     try {
       const layerObj = layersWithSel.find(
@@ -121,12 +128,9 @@ export default function BatchEditModal({
       const { entry } = layerObj;
       const { selectedIds, layer } = entry;
 
-      // 1) Fecha “ahora” en ISO
+      // Fecha “ahora”
       const nowIso = new Date().toISOString();
 
-      // 2) Preparar updates: siempre sobreescribe la etapa seleccionada,
-      //    y back‑fill de anteriores vacías (opcional, si lo necesitas igual
-      //    puedes repetir la lógica de back‑fill que ya tenías)
       const updates = selectedIds.map((id) => ({
         attributes: {
           OBJECTID: id,
@@ -135,13 +139,7 @@ export default function BatchEditModal({
       }));
       await layer.applyEdits({ updateFeatures: updates });
 
-      // 3) Aquí puedes volver a disparar tu lógica de recálculo de estadoActual
-      //    exactamente igual que antes si la necesitabas. Por simplicidad la
-      //    omito, pero tú la copias tal cual.
-
-      // 4) Avisar al padre
       onApply(selectedLayerIdx, selectedEtapaField, nowIso);
-
     } catch (err) {
       console.error("Error applying batch edits:", err);
       window.alert("Error al aplicar los cambios: " + err.message);
@@ -150,12 +148,21 @@ export default function BatchEditModal({
     }
   };
 
-  // parse número de la etapa seleccionada y buscar la anterior
-  const selNum = parseInt(
-    selectedEtapaField.match(/\d+$/)?.[0] ?? "",
-    10
-  );
-  const prevEtapa = availableEtapas.find((e) => e.num === selNum - 1);
+  // === NUEVO: Función para eliminar **todas** las fechas anteriores ===
+  const handleClearAll = () => {
+    try {
+      // recorre todas las etapas que tienen fecha
+      availableEtapas.forEach((e) => {
+        if (e.hasDate) {
+          onClearEtapa(selectedLayerIdx, e.dateField);
+        }
+      });
+      // refrescar la lista
+      setRefreshId((id) => id + 1);
+    } catch (err) {
+      window.alert("Error al eliminar todas las fechas: " + err.message);
+    }
+  };
 
   return (
     <div style={backdrop}>
@@ -165,7 +172,7 @@ export default function BatchEditModal({
           <button style={closeBtn} onClick={onCancel}>✕</button>
         </div>
         <div style={body}>
-          {/* Selector de capa (si hay varias) */}
+          {/* Selector de capa */}
           {layersWithSel.length > 1 && (
             <div>
               <label style={label}>Capa:</label>
@@ -218,10 +225,7 @@ export default function BatchEditModal({
                       onClick={() => {
                         try {
                           if (!e.hasDate) throw new Error("Nada que eliminar");
-                          onClearEtapa(
-                            selectedLayerIdx,
-                            e.dateField
-                          );
+                          onClearEtapa(selectedLayerIdx, e.dateField);
                           setRefreshId((id) => id + 1);
                         } catch (err) {
                           window.alert("No se pudo eliminar: " + err.message);
@@ -236,8 +240,13 @@ export default function BatchEditModal({
             </div>
           </div>
 
-          {/* Botones abajo */}
+          {/* Botones de acción */}
           <div style={footer}>
+            {/* ↓ NUEVO botón para borrar TODAS las fechas anteriores */}
+            <button style={clearAllBtn} onClick={handleClearAll}>
+              Eliminar todas las fechas anteriores
+            </button>
+
             <button style={cancelBtn} onClick={onCancel}>
               Cancelar
             </button>
@@ -318,6 +327,15 @@ const delBtn = {
   background: "none",
   border: "none",
   color: "#c00",
+  cursor: "pointer"
+};
+const clearAllBtn = {
+  marginRight: 8,
+  padding: "6px 12px",
+  background: "#dc3545",
+  color: "#fff",
+  border: "none",
+  borderRadius: 4,
   cursor: "pointer"
 };
 const footer = { display: "flex", justifyContent: "flex-end", gap: 8 };
