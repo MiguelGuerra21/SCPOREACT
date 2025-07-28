@@ -140,41 +140,51 @@ const AppContainer = () => {
 
 
 
-    async function handleClearEtapa(layerIdx, dateField) {
-        const entry = layers[layerIdx];
-        if (!entry) return window.alert("Capa no encontrada");
+   async function handleClearEtapa(layerIdx, dateField) {
+  const entry = layers[layerIdx];
+  if (!entry) return window.alert("Capa no encontrada");
 
-        const { layer, selectedIds } = entry;
-        if (!selectedIds?.length) {
-            return window.alert("No hay features seleccionadas");
-        }
+  const { layer, selectedIds } = entry;
+  if (!selectedIds?.length) {
+    return window.alert("No hay features seleccionadas");
+  }
 
-        // Build a single update that sets that dateField to null/""
-        const updates = selectedIds.map(oid => ({
-            attributes: {
-                OBJECTID: oid,
-                [dateField]: null  // or "" if you prefer string
-            }
-        }));
-
-        try {
-            const result = await layer.applyEdits({ updateFeatures: updates });
-            if (result.updateFeaturesResults.some(r => !r.success)) {
-                window.alert("Algunas fechas no pudieron eliminarse.");
-            }
-        } catch (err) {
-            console.error(err);
-        }
-
-        // force repaint
-        if (entry.layer.renderer) {
-            entry.layer.renderer = entry.layer.renderer.clone();
-        }
-
-        // close & reopen the modal so it re‑queries and greys out correctly
-        setBatchEditOpen(false);
-        setTimeout(() => setBatchEditOpen(true), 0);
+  // Build a single update that sets that dateField to null/""
+  const updates = selectedIds.map((oid) => ({
+    attributes: {
+      OBJECTID: oid,
+      [dateField]: null
     }
+  }));
+
+  let result;
+  try {
+    result = await layer.applyEdits({ updateFeatures: updates });
+  } catch (err) {
+    console.error(err);
+    return window.alert("Error al eliminar fechas: " + err.message);
+  }
+
+  // Normalizamos el array de resultados:
+  const updateResults =
+    result.updateFeaturesResults ??
+    result.updateFeatureResults ??    // en algunas versiones
+    result.updates ??                  // o si viene con otro nombre
+    [];
+
+  // Ahora sí podemos usar .some de forma segura:
+  if (updateResults.some((r) => !r.success)) {}
+
+  // force repaint
+  if (entry.layer.renderer) {
+    entry.layer.renderer = entry.layer.renderer.clone();
+  }
+
+  // close & reopen the modal para que re‑consulte y pinte bien
+  setBatchEditOpen(false);
+  setTimeout(() => setBatchEditOpen(true), 0);
+}
+
 
 
 

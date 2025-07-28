@@ -128,13 +128,20 @@ export default function BatchEditModal({
       const { entry } = layerObj;
       const { selectedIds, layer } = entry;
 
+      // Busca el valor (label) de la etapa para usarlo en estado
+      const etapaEntry = availableEtapas.find(
+        (e) => e.dateField === selectedEtapaField
+      );
+      const estadoValue = etapaEntry ? etapaEntry.label : "";
+
       // Fecha “ahora”
       const nowIso = new Date().toISOString();
 
       const updates = selectedIds.map((id) => ({
         attributes: {
           OBJECTID: id,
-          [selectedEtapaField]: nowIso
+          [selectedEtapaField]: nowIso,
+          estado: estadoValue
         }
       }));
       await layer.applyEdits({ updateFeatures: updates });
@@ -148,16 +155,50 @@ export default function BatchEditModal({
     }
   };
 
-  // === NUEVO: Función para eliminar **todas** las fechas anteriores ===
+  // === Función para eliminar una fecha específica y actualizar estado ===
+  const handleClearSingle = async (dateField) => {
+    setIsUpdating(true);
+    try {
+      const layerObj = layersWithSel.find(
+        (l) => l.idx === selectedLayerIdx
+      );
+      if (!layerObj) return;
+      const { entry } = layerObj;
+      const { selectedIds, layer } = entry;
+
+      // Después de borrar esta etapa, el estado debe ser la anterior con fecha
+      const futureEtapas = availableEtapas
+        .filter((e) => e.hasDate && e.dateField !== dateField)
+        .sort((a, b) => a.num - b.num);
+      const newLast = futureEtapas.pop();
+      const newEstado = newLast ? newLast.label : "";
+
+      const updates = selectedIds.map((id) => ({
+        attributes: {
+          OBJECTID: id,
+          [dateField]: null,
+          estado: newEstado
+        }
+      }));
+      await layer.applyEdits({ updateFeatures: updates });
+
+      onClearEtapa(selectedLayerIdx, dateField);
+      setRefreshId((id) => id + 1);
+    } catch (err) {
+      window.alert("No se pudo eliminar: " + err.message);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // === Función para eliminar **todas** las fechas anteriores ===
   const handleClearAll = () => {
     try {
-      // recorre todas las etapas que tienen fecha
       availableEtapas.forEach((e) => {
         if (e.hasDate) {
           onClearEtapa(selectedLayerIdx, e.dateField);
         }
       });
-      // refrescar la lista
       setRefreshId((id) => id + 1);
     } catch (err) {
       window.alert("Error al eliminar todas las fechas: " + err.message);
@@ -222,15 +263,7 @@ export default function BatchEditModal({
                     <button
                       style={delBtn}
                       title={`Eliminar fecha de ${e.label}`}
-                      onClick={() => {
-                        try {
-                          if (!e.hasDate) throw new Error("Nada que eliminar");
-                          onClearEtapa(selectedLayerIdx, e.dateField);
-                          setRefreshId((id) => id + 1);
-                        } catch (err) {
-                          window.alert("No se pudo eliminar: " + err.message);
-                        }
-                      }}
+                      onClick={() => handleClearSingle(e.dateField)}
                     >
                       <FaTimes />
                     </button>
@@ -242,7 +275,6 @@ export default function BatchEditModal({
 
           {/* Botones de acción */}
           <div style={footer}>
-            {/* ↓ NUEVO botón para borrar TODAS las fechas anteriores */}
             <button style={clearAllBtn} onClick={handleClearAll}>
               Eliminar todas las fechas anteriores
             </button>
