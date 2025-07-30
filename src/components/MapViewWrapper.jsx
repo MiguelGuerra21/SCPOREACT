@@ -15,13 +15,13 @@ const MapViewWrapper = ({
   const mapDiv = useRef(null);
   const dragHandleRef = useRef(null);
   const clickHandleRef = useRef(null);
-  
+
   // Estado para el modo multi-selección y su ref
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const multiSelectModeRef = useRef(multiSelectMode);
   multiSelectModeRef.current = multiSelectMode;
   const shiftPressedRef = useRef(false); //estado global de la tecla Shift
- // Detectamos la plataforma (una sola vez)
+  // Detectamos la plataforma (una sola vez)
   const platform = Capacitor.getPlatform();
 
   useEffect(() => {
@@ -72,12 +72,15 @@ const MapViewWrapper = ({
       // Quitar widget Zoom
       view.ui.remove("zoom");
 
+      //Desactivar auto open del popup
+      view.popup.autoOpenEnabled = false;
+
       // ——— BOX-SELECTION ———
       let dragOrigin = null;
       let boxGraphic = null;
 
       dragHandleRef.current = view.on("drag", async (event) => {
-        const wantsBox = 
+        const wantsBox =
           event.button === 0 &&
           (
             (["web", "electron"].includes(platform) && shiftPressedRef.current) ||
@@ -180,11 +183,61 @@ const MapViewWrapper = ({
 
       // ——— CLICK MÚLTIPLE (Ctrl+Click o multiSelectMode) ———
       clickHandleRef.current = view.on("click", async (event) => {
-        const wantsClick =
+        const wantsSelectionClick =
           (["web", "electron"].includes(platform) && event.native.ctrlKey) ||
           (["android", "ios"].includes(platform) && multiSelectModeRef.current);
-        if (!wantsClick) return;
 
+        // if it’s a Ctrl+Click (or mobile multiselect), only do highlight toggling
+        if (wantsSelectionClick) {
+          event.stopPropagation();
+
+          const hit = await view.hitTest(event);
+          if (!hit.results.length) return;
+          const result = hit.results.find(r =>
+            layersRef.current.some(e => e.layerView && r.graphic.layer === e.layer)
+          );
+          if (!result) return;
+
+          const graphic = result.graphic;
+          const entry = layersRef.current.find(e => e.layer === graphic.layer);
+          if (!entry) return;
+
+          const oid = graphic.getAttribute("OBJECTID");
+          if (oid == null) return;
+
+          const prevIds = entry.selectedIds || [];
+          const newIds = prevIds.includes(oid)
+            ? prevIds.filter(id => id !== oid)
+            : [...prevIds, oid];
+
+          entry.selectedIds = newIds;
+          entry.highlightHandle?.remove();
+
+          if (newIds.length) {
+            try {
+              const q = entry.layerView.createQuery();
+              q.objectIds = newIds;
+              q.returnGeometry = true;
+              const resultSel = await entry.layerView.queryFeatures(q);
+              if (resultSel.features.length) {
+                entry.highlightHandle = entry.layerView.highlight(resultSel.features);
+              }
+            } catch (err) {
+              console.error("Error en CTRL+click selection:", err);
+            }
+          }
+
+          // recalculate total
+          let total = 0;
+          for (let e of layersRef.current) {
+            if (Array.isArray(e.selectedIds)) total += e.selectedIds.length;
+          }
+          setSelectedCount(total);
+
+          return; // do NOT open popup
+        }
+
+        // otherwise it’s a normal click → show popup
         const hit = await view.hitTest(event);
         if (!hit.results.length) return;
         const result = hit.results.find(r =>
@@ -193,40 +246,10 @@ const MapViewWrapper = ({
         if (!result) return;
 
         const graphic = result.graphic;
-        const entry = layersRef.current.find(e => e.layer === graphic.layer);
-        if (!entry) return;
-
-        const oid = graphic.getAttribute("OBJECTID");
-        if (oid == null) return;
-
-        const prevIds = entry.selectedIds || [];
-        const newIds = prevIds.includes(oid)
-          ? prevIds.filter(id => id !== oid)
-          : [...prevIds, oid];
-
-        entry.selectedIds = newIds;
-        entry.highlightHandle?.remove();
-
-        if (newIds.length) {
-          try {
-            const q = entry.layerView.createQuery();
-            q.objectIds = newIds;
-            q.returnGeometry = true;
-            const resultSel = await entry.layerView.queryFeatures(q);
-            if (resultSel.features.length) {
-              entry.highlightHandle = entry.layerView.highlight(resultSel.features);
-            }
-          } catch (err) {
-            console.error("Error en CTRL+click selection:", err);
-          }
-        }
-
-        // Recalcular total
-        let total = 0;
-        for (let e of layersRef.current) {
-          if (Array.isArray(e.selectedIds)) total += e.selectedIds.length;
-        }
-        setSelectedCount(total);
+        view.popup.open({
+          features: [graphic],
+          location: event.mapPoint
+        });
       });
     });
 
