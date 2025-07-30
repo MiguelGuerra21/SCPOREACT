@@ -780,7 +780,8 @@ const AppContainer = () => {
         try {
             setLoadingMessage("Consultando entidades...");
             setProgress(0);
-
+            // 0) Fuerza recarga de los edits aplicados (estado incluido)
+            await layer.refresh();
             // 1. Consultar features
             const query = layer.createQuery();
             query.where = "1=1";
