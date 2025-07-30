@@ -307,7 +307,7 @@ const AppContainer = () => {
 
             //Parsear el shapefile
             setLoadingMessage("Parseando shapefile y construyendo features ");
-            const geojson = await shpjs(arrayBuffer);
+            const geojson = await shpjs(arrayBuffer , "UTF-8");
 
             if (!geojson?.features?.length) {
                 console.warn("No se encontraron features válidas en el shapefile:", file.name);
@@ -883,7 +883,7 @@ const AppContainer = () => {
             const origZip = await JSZip.loadAsync(arrayBuffer);
             const newZip = new JSZip();
             // Sanitize layer name for file-system
-            const base = name.replace(/[^a-z0-9]/gi, "_");
+            const base = name.replace(/[^a-z0-9]/gi, "_").toLowerCase();
             await Promise.all(
                 Object.keys(origZip.files).map(async (path) => {
                     const fileData = await origZip.file(path).async("arraybuffer");
@@ -891,6 +891,7 @@ const AppContainer = () => {
                     newZip.file(`${base}${ext}`, fileData);
                 })
             );
+            newZip.file(`${base}.cpg`, "UTF-8"); // Añadir archivo de codificación
             const finalBlob = await newZip.generateAsync({ type: "blob" });
 
             // 5. Guardar ZIP resultante
