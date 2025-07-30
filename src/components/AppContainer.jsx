@@ -316,12 +316,41 @@ const AppContainer = () => {
 
             // --- Detectar campos de fecha dinámicamente ---
             function esFechaValida(val) {
-                if (val instanceof Date) {
-                    return val.getFullYear() >= 1900;
+                // Si el valor es null/undefined
+                if (val == null) return false;
+    
+                // Si es un timestamp numérico (como 1753826400000)
+                if (typeof val === 'number') {
+                    // Verificamos que sea un timestamp razonable (entre 1970 y 2100)
+                    const year = new Date(val).getFullYear();
+                    return year >= 1900 && year <= 2100;
                 }
-                if (typeof val === "string" && val.trim() !== "") {
+    
+                // Si es instancia de Date
+                if (val instanceof Date) {
+                    return !isNaN(val.getTime()) && val.getFullYear() >= 1900;
+                }
+    
+                // Si es string
+                if (typeof val === 'string' && val.trim() !== '') {
                     const d = new Date(val);
-                    return !isNaN(d) && d.getFullYear() >= 1900;
+                    return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
+                }
+    
+                // Si es DateTime de Luxon
+                if (val?.isValid && typeof val.isValid === 'function') {
+                    return val.isValid() && val.year >= 1900;
+                }
+    
+                // Si es Moment.js
+                if (val?.isValid && typeof val.isValid === 'function' && val?.year) {
+                    return val.isValid() && val.year() >= 1900;
+                }
+    
+                // Para cualquier otro objeto con método getTime()
+                if (val?.getTime && typeof val.getTime === 'function') {
+                    const d = new Date(val.getTime());
+                    return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
                 }
                 return false;
             }
@@ -780,7 +809,8 @@ const AppContainer = () => {
         try {
             setLoadingMessage("Consultando entidades...");
             setProgress(0);
-
+            // 0) Fuerza recarga de los edits aplicados (estado incluido)
+            await layer.refresh();
             // 1. Consultar features
             const query = layer.createQuery();
             query.where = "1=1";
