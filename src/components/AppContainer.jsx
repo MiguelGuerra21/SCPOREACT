@@ -140,50 +140,50 @@ const AppContainer = () => {
 
 
 
-   async function handleClearEtapa(layerIdx, dateField) {
-  const entry = layers[layerIdx];
-  if (!entry) return window.alert("Capa no encontrada");
+    async function handleClearEtapa(layerIdx, dateField) {
+        const entry = layers[layerIdx];
+        if (!entry) return window.alert("Capa no encontrada");
 
-  const { layer, selectedIds } = entry;
-  if (!selectedIds?.length) {
-    return window.alert("No hay features seleccionadas");
-  }
+        const { layer, selectedIds } = entry;
+        if (!selectedIds?.length) {
+            return window.alert("No hay features seleccionadas");
+        }
 
-  // Build a single update that sets that dateField to null/""
-  const updates = selectedIds.map((oid) => ({
-    attributes: {
-      OBJECTID: oid,
-      [dateField]: null
+        // Build a single update that sets that dateField to null/""
+        const updates = selectedIds.map((oid) => ({
+            attributes: {
+                OBJECTID: oid,
+                [dateField]: null
+            }
+        }));
+
+        let result;
+        try {
+            result = await layer.applyEdits({ updateFeatures: updates });
+        } catch (err) {
+            console.error(err);
+            return window.alert("Error al eliminar fechas: " + err.message);
+        }
+
+        // Normalizamos el array de resultados:
+        const updateResults =
+            result.updateFeaturesResults ??
+            result.updateFeatureResults ??    // en algunas versiones
+            result.updates ??                  // o si viene con otro nombre
+            [];
+
+        // Ahora sí podemos usar .some de forma segura:
+        if (updateResults.some((r) => !r.success)) { }
+
+        // force repaint
+        if (entry.layer.renderer) {
+            entry.layer.renderer = entry.layer.renderer.clone();
+        }
+
+        // close & reopen the modal para que re‑consulte y pinte bien
+        setBatchEditOpen(false);
+        setTimeout(() => setBatchEditOpen(true), 0);
     }
-  }));
-
-  let result;
-  try {
-    result = await layer.applyEdits({ updateFeatures: updates });
-  } catch (err) {
-    console.error(err);
-    return window.alert("Error al eliminar fechas: " + err.message);
-  }
-
-  // Normalizamos el array de resultados:
-  const updateResults =
-    result.updateFeaturesResults ??
-    result.updateFeatureResults ??    // en algunas versiones
-    result.updates ??                  // o si viene con otro nombre
-    [];
-
-  // Ahora sí podemos usar .some de forma segura:
-  if (updateResults.some((r) => !r.success)) {}
-
-  // force repaint
-  if (entry.layer.renderer) {
-    entry.layer.renderer = entry.layer.renderer.clone();
-  }
-
-  // close & reopen the modal para que re‑consulte y pinte bien
-  setBatchEditOpen(false);
-  setTimeout(() => setBatchEditOpen(true), 0);
-}
 
 
 
@@ -295,7 +295,7 @@ const AppContainer = () => {
             const zip = await JSZip.loadAsync(arrayBuffer);
 
             setLoadingMessage("Validando archivos");
-            const hasPrj = Object.keys(zip.files).some(name => 
+            const hasPrj = Object.keys(zip.files).some(name =>
                 name.toLowerCase().endsWith(".prj")
             );
             if (!hasPrj) {
@@ -565,55 +565,55 @@ const AppContainer = () => {
 
             });
             // --- Configurar eventos para esta capa específica ---
-        const handleLayerUpdates = () => {
-            setLayers(prev => prev.map(layer => {
-            if (layer.id === newId) {
-                return { ...layer, version: (layer.version || 0) + 1 };
-            }
-            return layer;
-            }));
-        };
- 
-        featureLayer.on("refresh", handleLayerUpdates);
-        featureLayer.on("edits", handleLayerUpdates);
- 
+            const handleLayerUpdates = () => {
+                setLayers(prev => prev.map(layer => {
+                    if (layer.id === newId) {
+                        return { ...layer, version: (layer.version || 0) + 1 };
+                    }
+                    return layer;
+                }));
+            };
+
+            featureLayer.on("refresh", handleLayerUpdates);
+            featureLayer.on("edits", handleLayerUpdates);
+
             // --- Funciones para actualización en tiempo real ---
             const updateFeatureState = async (featureId, newState) => {
                 try {
                     const query = featureLayer.createQuery();
                     query.objectIds = [featureId];
                     const { features } = await featureLayer.queryFeatures(query);
-               
+
                     if (!features.length) return;
-               
+
                     const feature = features[0];
-               
+
                     // Actualizar el estado y recalcular la fecha más reciente
                     const updatedProps = { ...feature.attributes };
                     updatedProps.Estado = newState;
-               
+
                     await featureLayer.applyEdits({
                         updateFeatures: [{
                             attributes: updatedProps,
                             geometry: feature.geometry
                         }]
                     });
-               
+
                     // Refrescar la vista
                     const layerView = await view.whenLayerView(featureLayer);
                     layerView.refresh();
-               
+
                 } catch (error) {
                     console.error("Error updating feature state:", error);
                 }
             };
- 
+
             const batchUpdateFeatureStates = async (updates) => {
                 try {
                     const query = featureLayer.createQuery();
                     query.objectIds = updates.map(u => u.featureId);
                     const { features } = await featureLayer.queryFeatures(query);
-       
+
                     const updateFeatures = features.map(feature => {
                         const update = updates.find(u => u.featureId === feature.attributes.OBJECTID);
                         return {
@@ -624,12 +624,12 @@ const AppContainer = () => {
                             geometry: feature.geometry
                         };
                     });
-       
+
                     // Aplicar los cambios y devolver el resultado
                     const result = await featureLayer.applyEdits({
                         updateFeatures
                     });
-       
+
                     // No intentar refrescar manualmente - ArcGIS maneja esto automáticamente
                     return {
                         success: true,
@@ -684,9 +684,9 @@ const AppContainer = () => {
                     })
                     .filter(Boolean);
 
-                    if (batch.length > 0) {
-                        await featureLayer.applyEdits({ addFeatures: batch });
-                    }
+                if (batch.length > 0) {
+                    await featureLayer.applyEdits({ addFeatures: batch });
+                }
 
                 // Progreso
                 setProgressCurrent((prev) => {
@@ -727,26 +727,26 @@ const AppContainer = () => {
                     const query = featureLayer.createQuery();
                     query.objectIds = [featureId];
                     const { features } = await featureLayer.queryFeatures(query);
-               
+
                     if (!features.length) return;
-               
+
                     const feature = features[0];
                     const originalProps = geojson.features.find(f =>
                         f.properties?.OBJECTID === featureId ||
                         f.properties?.FID === featureId
                     )?.properties || {};
-               
+
                     // Combinar propiedades originales con las actualizadas
                     const combinedProps = { ...originalProps, ...feature.attributes };
-               
+
                     // Recalcular estado
                     const newState = detectarEstado({ properties: combinedProps });
-               
+
                     // Actualizar si es diferente
                     if (feature.attributes.Estado !== newState) {
                         await updateFeatureState(featureId, newState);
                     }
-               
+
                     return newState;
                 },
                 cleanup: () => {
@@ -754,10 +754,10 @@ const AppContainer = () => {
                     featureLayer.off("edits", handleLayerUpdates);
                 }
             };
- 
+
             setStateColors(estadoAColor);
             setLayers((prev) => [...prev, newEntry]);
- 
+
         } catch (err) {
             console.error("Error procesando shapefile:", file.name, err);
             window.alert("Error al procesar shapefile: " + err.message);
@@ -781,12 +781,17 @@ const AppContainer = () => {
             setLoadingMessage("Consultando entidades...");
             setProgress(0);
 
-            // 1. Consultar features
+            // 1. Consultar todas las features
             const query = layer.createQuery();
             query.where = "1=1";
             query.returnGeometry = true;
             query.outFields = ["*"];
             const result = await layer.queryFeatures(query);
+
+            if (!result.features.length) {
+                alert("No hay entidades válidas para exportar.");
+                return;
+            }
 
             // 2. Construir GeoJSON
             setLoadingMessage("Construyendo GeoJSON...");
@@ -798,7 +803,6 @@ const AppContainer = () => {
                         if (geom.spatialReference?.isWebMercator) {
                             geom = webMercatorToGeographic(geom);
                         }
-
                         let geometry = null;
                         switch (geom.type) {
                             case "point":
@@ -815,97 +819,70 @@ const AppContainer = () => {
                             default:
                                 return null;
                         }
-
                         return {
                             type: "Feature",
                             geometry,
-                            properties: f.attributes,
+                            properties: { ...f.attributes }
                         };
                     })
-                    .filter(Boolean),
+                    .filter(Boolean)
             };
 
-            if (!geojson.features.length) {
-                alert("No hay entidades válidas para exportar.");
-                return;
-            }
-
-            // 3. Generar ZIP
-            setLoadingMessage("Generando archivo ZIP...");
+            // 3. Llamar al worker para generar ZIP base64
+            setLoadingMessage("Generando archivo ZIP…");
             const worker = new ExportWorker();
             const zipBlob = await new Promise((resolve, reject) => {
                 worker.onmessage = (e) => {
                     const { type, blob, message } = e.data;
-
-                    if (type === "done" && blob) {
-                        if (blob.size < 100) {
-                            reject(new Error("Archivo generado demasiado pequeño"));
-                        } else {
-                            resolve(blob);
-                        }
+                    if (type === "done" && blob && blob.size > 100) {
+                        resolve(blob);
                     } else {
                         reject(new Error(message || "Error en el worker"));
                     }
                     worker.terminate();
                 };
-
                 worker.onerror = (err) => {
-                    console.error("Error en worker:", err);
                     reject(err);
                     worker.terminate();
                 };
-
                 worker.postMessage({ geojson });
             });
 
-            // 4. Guardar el archivo
-            const fileName = `${name.replace(/[^a-z0-9]/gi, '_')}.zip`;
+            // 4. Renombrar todos los archivos dentro del ZIP para usar el nombre de capa
+            setLoadingMessage("Reetiquetando archivos…");
+            const arrayBuffer = await zipBlob.arrayBuffer();
+            const origZip = await JSZip.loadAsync(arrayBuffer);
+            const newZip = new JSZip();
+            // Sanitize layer name for file-system
+            const base = name.replace(/[^a-z0-9]/gi, "_");
+            await Promise.all(
+                Object.keys(origZip.files).map(async (path) => {
+                    const fileData = await origZip.file(path).async("arraybuffer");
+                    const ext = path.slice(path.lastIndexOf(".")).toLowerCase(); // e.g. “.shp”
+                    newZip.file(`${base}${ext}`, fileData);
+                })
+            );
+            const finalBlob = await newZip.generateAsync({ type: "blob" });
 
-            if (window.cordova?.plugins?.safMediastore) {
-                // Android
-                setLoadingMessage("Convirtiendo a base64...");
-                setProgress(0);
-                setProgressCurrent(0);
-                setProgressTotal(zipBlob.size);
-                const base64 = await blobToBase64(zipBlob, (percent, loaded, total) => {
-                    setProgress(percent);
-                    setProgressCurrent(loaded);
-                    setProgressTotal(total);
-                });
-                setLoadingMessage("Guardando archivo...");
-                await window.cordova.plugins.safMediastore.writeFile({
-                    data: base64,
-                    filename: fileName,
-                    mimeType: "application/zip"
-                });
-                alert("Shapefile guardado correctamente");
-            } else {
-                // Navegador: simula progreso de guardado
-                setLoadingMessage("Guardando archivo...");
-                for (let i = 1; i <= 100; i += 10) {
-                    setProgress(i);
-                    setProgressCurrent(i);
-                    setProgressTotal(100);
-                    await new Promise((r) => setTimeout(r, 10));
-                }
-                saveAs(zipBlob, fileName);
-                setProgress(100);
-                setProgressCurrent(100);
-                setProgressTotal(100);
-            }
+            // 5. Guardar ZIP resultante
+            setLoadingMessage("Guardando archivo…");
+            const fileName = `${base}.zip`;
+            saveAs(finalBlob, fileName);
+
+            alert("Shapefile exportado correctamente: " + fileName);
 
         } catch (err) {
             console.error("Error en exportLayerAsShapefile:", err);
             alert(`Error al exportar: ${err.message}`);
-        }
-        finally {
+        } finally {
+            // reset UI loader/progress
             setTimeout(() => {
                 setLoading(false);
                 setLoadingMessage("");
                 setProgress(0);
                 setProgressCurrent(0);
                 setProgressTotal(0);
-            }, 500); //se fija en 500 para que de tiempo a ver el 100%
+            }, 500);
         }
     };
 
