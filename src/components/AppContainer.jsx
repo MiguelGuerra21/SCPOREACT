@@ -46,95 +46,81 @@ const AppContainer = () => {
     const fileInputRef = useRef(null);
 
 
-    async function handleBatchEditApply(layerIndex, fieldName) {
-        const entry = layers[layerIndex];
-        if (!entry) { window.alert("Capa no encontrada"); return; }
-        const { layer, selectedIds } = entry;
-        if (!selectedIds?.length) { window.alert("Nada seleccionado"); setBatchEditOpen(false); return; }
+    async function handleBatchEditApply(layerIndex, fieldName, isoDateString) {
+  const entry = layers[layerIndex];
+  if (!entry) {
+    alert("Capa no encontrada");
+    return;
+  }
+  const { layer, selectedIds } = entry;
+  if (!selectedIds.length) {
+    alert("Nada seleccionado");
+    return;
+  }
 
-        // 1) Extraer número de etapa
-        const m = fieldName.match(/ET\s*0*?(\d+)$/i);
-        const selNum = m ? parseInt(m[1], 10) : null;
-        if (selNum == null) { window.alert("Campo inválido"); return; }
+  // 1) Extract the etapa number from the fieldName:
+  const m = fieldName.match(/ET\s*0*?(\d+)$/i);
+  const selNum = m ? parseInt(m[1], 10) : null;
+  if (selNum == null) {
+    alert("Campo inválido");
+    return;
+  }
 
-        // 2) Lista de todos los "Fecha ETnn" <= selNum
-        const allFecha = layer.fields
-            .filter(f => {
-                const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
-                return t && parseInt(t[1], 10) <= selNum;
-            })
-            .map(f => ({
-                name: f.name,
-                type: f.type,             // fecha, string, datetime, etc.
-                num: parseInt(f.name.match(/\d+$/)[0], 10)
-            }));
-        if (!allFecha.length) { window.alert("No hay campos Fecha ET"); return; }
+  // 2) Gather all “Fecha ETnn” fields ≤ selNum
+  const allFecha = layer.fields
+    .filter(f => {
+      const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
+      return t && parseInt(t[1], 10) <= selNum;
+    })
+    .map(f => ({
+      name: f.name,
+      num:   parseInt(f.name.match(/\d+$/)[0], 10),
+      type:  f.type
+    }));
 
-        // 3) Calcular "Madrid" ahora y medianoche Madrid
-        // 3a) Fecha pura
-        const madridDate = new Intl.DateTimeFormat("sv-SE", {
-            timeZone: "Europe/Madrid", year: "numeric", month: "2-digit", day: "2-digit"
-        }).format(new Date());                  // "2025-07-24"
-        // 3b) Fecha+hora sin T
-        const parts = new Intl.DateTimeFormat("sv-SE", {
-            timeZone: "Europe/Madrid",
-            year: "numeric", month: "2-digit", day: "2-digit",
-            hour: "2-digit", minute: "2-digit", second: "2-digit",
-            hour12: false
-        }).formatToParts(new Date());
-        const obj = Object.fromEntries(parts.map(p => [p.type, p.value]));
-        const madridDateTime = `${obj.year}-${obj.month}-${obj.day} ${obj.hour}:${obj.minute}:${obj.second}`;
-        // 3c) epoch de medianoche
-        const epochMidnight = Date.parse(`${madridDate}T00:00:00`);
+  // 3) Query those fields for all selected features
+  const q = layer.createQuery();
+  q.where         = `${layer.objectIdField} IN (${selectedIds.join(",")})`;
+  q.outFields     = [layer.objectIdField, ...allFecha.map(f => f.name)];
+  q.returnGeometry = false;
+  const res = await layer.queryFeatures(q);
 
-        // 4) Leer valores actuales
-        const q = layer.createQuery();
-        q.objectIds = selectedIds;
-        q.outFields = allFecha.map(f => f.name);
-        q.returnGeometry = false;
-        const res = await layer.queryFeatures(q);
-        const beforeMap = {};
-        res.features.forEach(feat => beforeMap[feat.attributes.OBJECTID] = feat.attributes);
+  // 4) Parse the ISO date string once
+  const chosenTime = Date.parse(isoDateString);
 
-        // 5) Construir updates
-        const updates = selectedIds.map(oid => {
-            const prev = beforeMap[oid] || {};
-            const attrs = { OBJECTID: oid };
+  // 5) Build updates: per feature
+  const updates = res.features.map(feat => {
+    const attrs = { OBJECTID: feat.attributes[layer.objectIdField] };
+    allFecha.forEach(f => {
+      const cur = feat.attributes[f.name];
+      const isEmpty = cur == null || cur === "" || cur === 0;
+      // set if it's the selected etapa, OR an earlier empty one
+      if (f.num === selNum || (f.num < selNum && isEmpty)) {
+        // if field type is "date", use epoch millis; otherwise string
+        attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
+      }
+    });
+    return { attributes: attrs };
+  });
 
-            allFecha.forEach(f => {
-                const had = prev[f.name];
-                const nonEmpty = had != null && String(had).trim() !== "";
+  if (!updates.length) {
+    alert("Nada que actualizar");
+    return;
+  }
 
-                if (f.num === selNum || !nonEmpty) {
-                    // selected siempre, y backfill solo si vacíos
-                    if (f.type === "date") {
-                        attrs[f.name] = epochMidnight;
-                    } else {
-                        attrs[f.name] = madridDateTime;
-                    }
-                }
-            });
+  // 6) Apply edits
+  try {
+    const result = await layer.applyEdits({ updateFeatures: updates });
+    const fails = (result.updateFeaturesResults || []).filter(r => !r.success);
+    if (fails.length) alert("Algunas no se actualizaron");
+  } catch (err) {
+    console.error(err);
+    alert("Error al actualizar: " + err.message);
+  }
 
-            return Object.keys(attrs).length > 1 ? { attributes: attrs } : null;
-        }).filter(u => u);
-
-        if (!updates.length) { window.alert("Nada que actualizar"); return; }
-
-        // 6) Aplicar cambios
-        try {
-            const result = await layer.applyEdits({ updateFeatures: updates });
-            const fails = result.updateFeaturesResults?.filter(r => !r.success) || [];
-            if (fails.length) window.alert("Algunas no se actualizaron");
-        } catch (err) {
-            console.error(err);
-        }
-
-        // 7) Forzar repaint
-        entry.layerView?.refresh?.();
-
-        // 8) Cerrar modal
-        setBatchEditOpen(false);
-    }
+  // 7) Close modal (ArcGIS auto-refreshes the view)
+  setBatchEditOpen(false);
+}
 
 
 
@@ -567,8 +553,8 @@ const AppContainer = () => {
       }
       // forzamos a Date incluso si viene como string
       var dt = Date(v);
-      // formatea día/mes/año y hora:minuto:segundo
-      return Text(dt, 'DD/MM/YYYY HH:mm:ss');
+      // formatea día/mes/año y hora
+      return Text(dt, 'DD/MM/YYYY');
     `
                     })),
 

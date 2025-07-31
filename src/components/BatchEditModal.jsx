@@ -5,49 +5,44 @@ export default function BatchEditModal({
   layers,
   onCancel,
   onApply,
-  onClearEtapa
+  onClearEtapa,
+  onClearAllEtapas
 }) {
   const [refreshId, setRefreshId] = useState(0);
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // 1) Sólo capas poligonales con selección
-  const layersWithSel = useMemo(() => {
-    return layers
+  const layersWithSel = useMemo(() =>
+    layers
       .map((entry, idx) => ({ entry, idx }))
       .filter(
         ({ entry }) =>
           entry.selectedIds?.length > 0 &&
           entry.layer.geometryType === "polygon"
-      );
-  }, [layers]);
+      ), [layers]);
 
-  // 2) Capa seleccionada
   const [selectedLayerIdx, setSelectedLayerIdx] = useState(
     layersWithSel[0]?.idx ?? 0
   );
-  // 5) Etapa seleccionada (campo Fecha ETnn)
-  const [selectedEtapaField, setSelectedEtapaField] = useState("");
 
-  // 3) Construir lista de todas las etapas posibles
   const allEtapas = useMemo(() => {
     const lw = layersWithSel.find((l) => l.idx === selectedLayerIdx);
     if (!lw) return [];
     return lw.entry.layer.fields
-      .map((f) => f.name)
-      .filter((n) => /^Fecha\s+ET\s*\d+$/i.test(n))
-      .map((dateField) => {
-        const num = parseInt(dateField.match(/\d+$/)[0], 10);
+      .filter((f) => /^Fecha\s+ET\s*\d+$/i.test(f.name))
+      .map((f) => {
+        const num = parseInt(f.name.match(/\d+$/)[0], 10);
         return {
-          dateField,
+          dateField: f.name,
           nameField: `Etapa ${String(num).padStart(2, "0")}`,
-          num
+          num,
+          type: f.type
         };
       })
       .sort((a, b) => a.num - b.num);
   }, [layersWithSel, selectedLayerIdx]);
 
-  // 4) Consultar la primera feature para cargar nombres y saber qué etapas ya tienen fecha
   const [availableEtapas, setAvailableEtapas] = useState([]);
+
   useEffect(() => {
     const lw = layersWithSel.find((l) => l.idx === selectedLayerIdx);
     if (!lw || allEtapas.length === 0) {
@@ -61,32 +56,35 @@ export default function BatchEditModal({
     q.outFields = allEtapas.flatMap((e) => [e.nameField, e.dateField]);
     q.returnGeometry = false;
 
-    layer
-      .queryFeatures(q)
-      .then((res) => {
-        const attrs = res.features[0]?.attributes || {};
-        setAvailableEtapas(
-          allEtapas
-            .map((e) => {
-              const lbl = attrs[e.nameField];
-              if (!lbl || String(lbl).trim() === "") return null;
-              return {
-                ...e,
-                label: String(lbl).trim(),
-                hasDate:
-                  attrs[e.dateField] != null &&
-                  String(attrs[e.dateField]).trim() !== ""
-              };
-            })
-            .filter(Boolean)
-        );
-      })
-      .catch(() => {
-        setAvailableEtapas([]);
-      });
+    layer.queryFeatures(q).then((res) => {
+      const attrs = res.features[0]?.attributes || {};
+      const newAvail = allEtapas
+        .map((e) => {
+          const lbl = attrs[e.nameField];
+          if (!lbl || String(lbl).trim() === "") return null;
+          const hasDate =
+            attrs[e.dateField] != null &&
+            String(attrs[e.dateField]).trim() !== "";
+          return { ...e, label: String(lbl).trim(), hasDate };
+        })
+        .filter(Boolean);
+      setAvailableEtapas(newAvail);
+    });
   }, [layersWithSel, selectedLayerIdx, allEtapas, refreshId]);
 
-  // 6) Calcular la última etapa llena (para mostrar la cruz ahí)
+  const [selectedDate, setSelectedDate] = useState("");
+  const [selectedEtapaField, setSelectedEtapaField] = useState("");
+
+  useEffect(() => {
+    const firstUnfilled = availableEtapas.find((e) => !e.hasDate);
+    setSelectedEtapaField(
+      firstUnfilled?.dateField || availableEtapas[0]?.dateField || ""
+    );
+  }, [availableEtapas]);
+
+  
+
+  const selNum = parseInt(selectedEtapaField.match(/\d+$/)?.[0] || "", 10);
   const lastFilledNum = useMemo(
     () =>
       availableEtapas
@@ -96,134 +94,106 @@ export default function BatchEditModal({
     [availableEtapas]
   );
 
-  // 5 bis) Elegir por defecto la primera no rellena
-  useEffect(() => {
-    const firstUnfilled = availableEtapas.find((e) => !e.hasDate);
-    setSelectedEtapaField(
-      firstUnfilled?.dateField || availableEtapas[0]?.dateField || ""
-    );
-  }, [availableEtapas]);
+  if (!layersWithSel.length || !availableEtapas.length) return null;
 
-  // Early return
-  if (!layersWithSel.length || !availableEtapas.length) {
-    return null;
-  }
-
-  // parse número de la etapa seleccionada y buscar la anterior
-  const selNum = parseInt(
-    selectedEtapaField.match(/\d+$/)?.[0] ?? "",
-    10
-  );
-  const prevEtapa = availableEtapas.find((e) => e.num === selNum - 1);
-
-  // === Función para aplicar cambios ===
-  const handleApplyChanges = async () => {
-    if (!selectedEtapaField) return;
-    setIsUpdating(true);
-    try {
-      const layerObj = layersWithSel.find(
-        (l) => l.idx === selectedLayerIdx
-      );
-      if (!layerObj) return;
-      const { entry } = layerObj;
-      const { selectedIds, layer } = entry;
-
-      // Busca el valor (label) de la etapa para usarlo en estado
-      const etapaEntry = availableEtapas.find(
-        (e) => e.dateField === selectedEtapaField
-      );
-      const estadoValue = etapaEntry ? etapaEntry.label : "";
-
-      // Fecha “ahora”
-      const nowIso = new Date().toISOString();
-
-      const updates = selectedIds.map((id) => ({
-        attributes: {
-          OBJECTID: id,
-          [selectedEtapaField]: nowIso,
-          estado: estadoValue
-        }
-      }));
-      await layer.applyEdits({ updateFeatures: updates });
-
-      onApply(selectedLayerIdx, selectedEtapaField, nowIso);
-    } catch (err) {
-      console.error("Error applying batch edits:", err);
-      window.alert("Error al aplicar los cambios: " + err.message);
-    } finally {
-      setIsUpdating(false);
-    }
-  };
-
-  // === Función para eliminar una fecha específica y actualizar estado ===
-  const handleClearSingle = async (dateField) => {
+  // === clear all etapas internas ===
+const handleClearAllEtapas = async () => {
+  if (!window.confirm("¿Estás seguro de borrar TODAS las fechas de etapa de esta capa?")) return;
   setIsUpdating(true);
   try {
-    const layerObj = layersWithSel.find(
-      (l) => l.idx === selectedLayerIdx
-    );
-    if (!layerObj) return;
-    const { entry } = layerObj;
-    const { selectedIds, layer } = entry;
-
-    // Después de borrar esta etapa, calcula las etapas restantes con fecha
-    const futureEtapas = availableEtapas
-      .filter((e) => e.hasDate && e.dateField !== dateField)
-      .sort((a, b) => a.num - b.num);
-
-    // Si no queda ninguna etapa, newEstado = "Sin estado"
-    const newLast = futureEtapas.pop();
-    const newEstado = newLast ? newLast.label : "Sin estado";
-
-    const updates = selectedIds.map((id) => ({
-      attributes: {
-        OBJECTID: id,
-        [dateField]: null,
-        estado: newEstado
-      }
+    const lw = layersWithSel.find((l) => l.idx === selectedLayerIdx);
+    const { layer, selectedIds } = lw.entry;
+    // todos los campos Fecha ETnn
+    const dateFields = allEtapas.map(e => e.dateField);
+    // preparar updates: asignar null a cada campo
+    const updates = selectedIds.map(id => ({
+      attributes: dateFields.reduce((acc, f) => {
+        acc.OBJECTID = id;
+        acc[f] = null;
+        return acc;
+      }, {})
     }));
-    await layer.applyEdits({ updateFeatures: updates });
-
-    onClearEtapa(selectedLayerIdx, dateField);
-    setRefreshId((id) => id + 1);
+    const result = await layer.applyEdits({ updateFeatures: updates });
+    const fails = result.updateFeaturesResults?.filter(r => !r.success) || [];
+    if (fails.length) window.alert("Algunas fechas no se pudieron borrar");
+    setRefreshId(id => id + 1);
   } catch (err) {
-    window.alert("No se pudo eliminar: " + err.message);
+    console.error(err);
+    window.alert("Error al borrar fechas: " + err.message);
   } finally {
     setIsUpdating(false);
   }
 };
 
 
-  // === Función para eliminar **todas** las fechas anteriores ===
-  const handleClearAll = async () => {
-    setIsUpdating(true);
-    try {
-      const layerObj = layersWithSel.find(
-        (l) => l.idx === selectedLayerIdx
-      );
-      if (!layerObj) return;
-      const { entry } = layerObj;
-      const { selectedIds, layer } = entry;
+ const handleApplyChanges = async () => {
+  if (!selectedEtapaField || !selectedDate) {
+    window.alert("Selecciona una etapa y una fecha");
+    return;
+  }
 
-      // Hardcode estado a 'Sin estado' y borrar todas las fechas
-      const fields = availableEtapas
-        .filter((e) => e.hasDate)
-        .map((e) => e.dateField);
+  // 1) Validar que el campo es tipo Date puro
+  const etapaInfo = allEtapas.find(e => e.dateField === selectedEtapaField);
+  if (!etapaInfo) return;
+  if (etapaInfo.type !== "date") {
+    window.alert(`El campo ${selectedEtapaField} no es de tipo Date puro`);
+    return;
+  }
 
-      const updates = selectedIds.map((id) => {
-        const attrs = { OBJECTID: id, estado: 'Sin estado' };
-        fields.forEach((f) => (attrs[f] = null));
-        return { attributes: attrs };
+  setIsUpdating(true);
+  try {
+    const lw = layersWithSel.find(l => l.idx === selectedLayerIdx);
+    const { layer, selectedIds } = lw.entry;
+
+    // 2) Etapas a procesar: todas con num ≤ selNum
+    const selNum = etapaInfo.num;
+    const toUpdate = allEtapas.filter(e => e.num <= selNum);
+    const outFields = toUpdate.map(e => e.dateField);
+
+    // 3) Query de todas las entidades seleccionadas para leer sus valores actuales
+    const q = layer.createQuery();
+    q.where       = `${layer.objectIdField} IN (${selectedIds.join(",")})`;
+    q.outFields   = [layer.objectIdField, ...outFields];
+    q.returnGeometry = false;
+    const { features } = await layer.queryFeatures(q);
+
+    // 4) Convertir selectedDate ("YYYY-MM-DD") a milisegundos
+    const dateMS = Date.parse(selectedDate);
+
+    // 5) Construir updates: por cada feature, actualizar:
+    //    • selectedEtapaField → dateMS
+    //    • cualquier toUpdate previo sin valor → dateMS
+    //    • dejar intactas aquellas previas con valor
+    const updates = features.map(feat => {
+      const attrs = { OBJECTID: feat.attributes[layer.objectIdField] };
+      toUpdate.forEach(e => {
+        const curVal = feat.attributes[e.dateField];
+        const isEmpty = curVal == null || curVal === "" || curVal === 0;
+        if (e.dateField === selectedEtapaField || isEmpty) {
+          attrs[e.dateField] = dateMS;
+        }
       });
+      return { attributes: attrs };
+    });
 
-      await layer.applyEdits({ updateFeatures: updates });
-      setRefreshId((id) => id + 1);
-    } catch (err) {
-      window.alert("Error al eliminar todas las fechas: " + err.message);
-    } finally {
-      setIsUpdating(false);
-    }
-  };
+    // 6) Aplicar edits
+    const result = await layer.applyEdits({ updateFeatures: updates });
+    const fails = result.updateFeaturesResults?.filter(r => !r.success) || [];
+    if (fails.length) window.alert("Algunos no se actualizaron");
+
+    // 7) Refresca y notifica al padre
+    onApply(selectedLayerIdx, selectedEtapaField, selectedDate);
+    setRefreshId(id => id + 1);
+  }
+  catch (err) {
+    console.error(err);
+    window.alert("Error al aplicar los cambios: " + err.message);
+  }
+  finally {
+    setIsUpdating(false);
+    onCancel();
+  }
+};
 
   return (
     <div style={backdrop}>
@@ -233,17 +203,13 @@ export default function BatchEditModal({
           <button style={closeBtn} onClick={onCancel}>✕</button>
         </div>
         <div style={body}>
-          {/* Selector de capa */}
           {layersWithSel.length > 1 && (
-            <div>
+            <>
               <label style={label}>Capa:</label>
               <select
                 style={selectStyle}
                 value={selectedLayerIdx}
-                onChange={(e) => {
-                  setSelectedLayerIdx(Number(e.target.value));
-                  setSelectedEtapaField("");
-                }}
+                onChange={(e) => setSelectedLayerIdx(Number(e.target.value))}
               >
                 {layersWithSel.map(({ entry, idx }) => (
                   <option key={idx} value={idx}>
@@ -251,65 +217,56 @@ export default function BatchEditModal({
                   </option>
                 ))}
               </select>
-            </div>
+            </>
           )}
 
-          {/* Lista de etapas */}
-          <div>
-            <label style={label}>Etapas:</label>
-            <div style={listContainer}>
-              {availableEtapas.map((e) => (
-                <div
-                  key={e.dateField}
-                  style={{
-                    ...listItem,
-                    color: e.hasDate ? "#999" : "#000"
-                  }}
-                >
-                  <label style={listLabel}>
-                    <input
-                      type="radio"
-                      name="etapa"
-                      disabled={e.hasDate}
-                      checked={selectedEtapaField === e.dateField}
-                      onChange={() =>
-                        !e.hasDate && setSelectedEtapaField(e.dateField)
-                      }
-                    />
-                    <span style={{ marginLeft: 8 }}>{e.label}</span>
-                  </label>
-                  {/* Cruz sólo en la última llenada */}
-                  {e.num === lastFilledNum && (
-                    <button
-                      style={delBtn}
-                      title={`Eliminar fecha de ${e.label}`}
-                      onClick={() => handleClearSingle(e.dateField)}
-                    >
-                      <FaTimes />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
+          <label style={label}>Etapas:</label>
+          <div style={listContainer}>
+            {availableEtapas.map((e) => (
+              <div key={e.dateField} style={{ ...listItem, color: e.hasDate ? "#999" : "#000" }}>
+                <label style={listLabel}>
+                  <input
+                    type="radio"
+                    name="etapa"
+                    disabled={e.hasDate}
+                    checked={selectedEtapaField === e.dateField}
+                    onChange={() => setSelectedEtapaField(e.dateField)}
+                  />
+                  <span style={{ marginLeft: 8 }}>{e.label}</span>
+                </label>
+                {e.num === lastFilledNum && (
+                  <button
+                    style={delBtn}
+                    onClick={() => {
+                      onClearEtapa(selectedLayerIdx, e.dateField);
+                      setRefreshId((id) => id + 1);
+                    }}
+                  >
+                    <FaTimes />
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
 
-          {/* Botones de acción */}
-          <div style={footer}>
-            <button style={clearAllBtn} onClick={handleClearAll}>
-              Eliminar todas las fechas anteriores
-            </button>
+          <div style={{ marginTop: 12 }}>
+            <label style={label}>Fecha a aplicar:</label>
+            <input
+              type="date"
+              style={selectStyle}
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+            />
+          </div>
 
+          <div style={footer}>
+            <button style={clearAllBtn} disabled= {isUpdating} onClick={(handleClearAllEtapas)}>
+              {isUpdating ? "Borrando..." : "Borrar todas"}
+            </button>
             <button style={cancelBtn} onClick={onCancel}>
               Cancelar
             </button>
-            <button
-              style={applyBtn}
-              disabled={isUpdating}
-              onClick={async () => {
-                await handleApplyChanges();
-                onCancel();
-              }}
-            >
+            <button style={applyBtn} disabled={isUpdating} onClick={handleApplyChanges}>
               {isUpdating ? "Actualizando..." : "Completar"}
             </button>
           </div>
@@ -320,87 +277,19 @@ export default function BatchEditModal({
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────
-const backdrop = {
-  position: "fixed",
-  inset: 0,
-  backgroundColor: "rgba(0,0,0,0.5)",
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-  zIndex: 3000
-};
-const modal = {
-  width: 420,
-  borderRadius: 8,
-  overflow: "hidden",
-  backgroundColor: "#fff",
-  boxShadow: "0 4px 16px rgba(0,0,0,0.2)"
-};
-const header = {
-  padding: "12px 16px",
-  background: "linear-gradient(90deg,#4facfe,#00f2fe)",
-  color: "#fff",
-  display: "flex",
-  justifyContent: "space-between"
-};
-const title = { margin: 0, fontSize: 18 };
-const closeBtn = {
-  background: "none",
-  border: "none",
-  color: "#fff",
-  fontSize: 20,
-  cursor: "pointer"
-};
-const body = { padding: 16, display: "flex", flexDirection: "column", gap: 12 };
-const label = { display: "block", marginBottom: 4 };
-const selectStyle = {
-  width: "100%",
-  padding: 8,
-  borderRadius: 4,
-  border: "1px solid #ccc",
-  fontSize: 14
-};
-const listContainer = {
-  maxHeight: 180,
-  overflowY: "auto",
-  border: "1px solid #ccc",
-  borderRadius: 4,
-  padding: 8
-};
-const listItem = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  padding: "4px 0"
-};
-const listLabel = { display: "flex", alignItems: "center", cursor: "pointer" };
-const delBtn = {
-  marginLeft: 8,
-  background: "none",
-  border: "none",
-  color: "#c00",
-  cursor: "pointer"
-};
-const clearAllBtn = {
-  marginRight: 8,
-  padding: "6px 12px",
-  background: "#dc3545",
-  color: "#fff",
-  border: "none",
-  borderRadius: 4,
-  cursor: "pointer"
-};
-const footer = { display: "flex", justifyContent: "flex-end", gap: 8 };
-const cancelBtn = {
-  padding: "8px 16px",
-  background: "#ccc",
-  border: "none",
-  borderRadius: 4
-};
-const applyBtn = {
-  padding: "8px 16px",
-  background: "#28a745",
-  color: "#fff",
-  border: "none",
-  borderRadius: 4
-};
+const backdrop     = { position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 3000 };
+const modal        = { width: 420, borderRadius: 8, overflow: "hidden", backgroundColor: "#fff", boxShadow: "0 4px 16px rgba(0,0,0,0.2)" };
+const header       = { padding: "12px 16px", background: "linear-gradient(90deg,#4facfe,#00f2fe)", color: "#fff", display: "flex", justifyContent: "space-between" };
+const title        = { margin: 0, fontSize: 18 };
+const closeBtn     = { background: "none", border: "none", color: "#fff", fontSize: 20, cursor: "pointer" };
+const body         = { padding: 16, display: "flex", flexDirection: "column", gap: 12 };
+const label        = { display: "block", marginBottom: 4 };
+const selectStyle  = { width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc", fontSize: 14 };
+const listContainer= { maxHeight: 180, overflowY: "auto", border: "1px solid #ccc", borderRadius: 4, padding: 8 };
+const listItem     = { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 0" };
+const listLabel    = { display: "flex", alignItems: "center", cursor: "pointer" };
+const delBtn       = { marginLeft: 8, background: "none", border: "none", color: "#c00", cursor: "pointer" };
+const clearAllBtn  = { marginRight: 8, padding: "6px 12px", background: "#dc3545", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" };
+const footer       = { display: "flex", justifyContent: "flex-end", gap: 8 };
+const cancelBtn    = { padding: "8px 16px", background: "#ccc", border: "none", borderRadius: 4 };
+const applyBtn     = { padding: "8px 16px", background: "#28a745", color: "#fff", border: "none", borderRadius: 4 };
