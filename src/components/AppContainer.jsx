@@ -250,6 +250,9 @@ const AppContainer = () => {
     // ----- Manejador de apertura de archivo (shapefile ZIP) -----
     const handleFileOpen = async (file) => {
 
+
+
+
         const view = viewRef.current;
         if (!file || !view) return;
 
@@ -286,10 +289,7 @@ const AppContainer = () => {
 
             // Parsear con shpjs
             const geojson = await shpjs(arrayBuffer, { encoding });
-
-            
-
-            console.log("🛠 GEOJSON tras conversión a Date:", geojson.features[0].properties);
+            console.log("GEOJSON reabierto:", geojson.features[0].properties);
 
             setLoadingMessage("Validando archivos");
             const hasPrj = Object.keys(zip.files).some(name =>
@@ -375,17 +375,6 @@ const AppContainer = () => {
 
             const fechaCampos = Array.from(fechaCamposSet).sort(sortByNum);
             const etapaCampos = Array.from(etapaCamposSet).sort(sortByNum);
-
-            // — convert ISO YYYY-MM-DD strings back to Date objects —
-            (fechaCampos || []).forEach(fieldName => {
-                geojson.features.forEach(feat => {
-                    const val = feat.properties[fieldName];
-                    // test for the exact ISO‐format you wrote out
-                    if (typeof val === "string" && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
-                        feat.properties[fieldName] = new Date(val);
-                    }
-                });
-            });
 
 
             // --- Función para detectar estado principal ---
