@@ -46,6 +46,120 @@ const AppContainer = () => {
     // Ref para el input de archivos
     const fileInputRef = useRef(null);
 
+    // Update detectarEstado to be more robust
+    function detectarEstado(props, fechaCampos) {
+        // 1. Handle undefined inputs
+        if (!fechaCampos || !Array.isArray(fechaCampos)) {
+            return "Sin estado";
+        }
+
+        // 2. Check for empty fechaCampos
+        if (fechaCampos.length === 0) {
+            return "Sin estado";
+        }
+
+        // 3. Handle missing props
+        if (!props || typeof props !== 'object') {
+            return "Sin estado";
+        }
+
+        // 4. Process fechaCampos in reverse order
+        for (let i = fechaCampos.length - 1; i >= 0; i--) {
+            const fechaCampo = fechaCampos[i];
+
+            // 5. Skip if field doesn't exist in properties
+            if (!props.hasOwnProperty(fechaCampo)) {
+                continue;
+            }
+
+            const fechaVal = props[fechaCampo];
+            if (!esFechaValida(fechaVal)) continue;
+
+            const etapaNumero = parseInt(fechaCampo.match(/\d+/)?.[0], 10);
+            if (!etapaNumero) return "Sin estado";
+
+            const etapaCampo = `Etapa ${etapaNumero.toString().padStart(2, "0")}`;
+
+            // 6. Handle missing etapaCampo property
+            const estadoVal = props.hasOwnProperty(etapaCampo)
+                ? props[etapaCampo]
+                : "";
+
+            return estadoVal && estadoVal.trim() !== ""
+                ? estadoVal.trim()
+                : "Sin estado";
+        }
+        return "Sin estado";
+    }
+
+    function esFechaValida(val) {
+        // Si el valor es null/undefined
+        if (val == null) return false;
+
+        // Si es un timestamp numérico (como 1753826400000)
+        if (typeof val === 'number') {
+            // Verificamos que sea un timestamp razonable (entre 1970 y 2100)
+            const year = new Date(val).getFullYear();
+            return year >= 1900 && year <= 2100;
+        }
+
+        // Si es instancia de Date
+        if (val instanceof Date) {
+            return !isNaN(val.getTime()) && val.getFullYear() >= 1900;
+        }
+
+        // Si es string
+        if (typeof val === 'string' && val.trim() !== '') {
+            const d = new Date(val);
+            return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
+        }
+
+        // Si es DateTime de Luxon
+        if (val?.isValid && typeof val.isValid === 'function') {
+            return val.isValid() && val.year >= 1900;
+        }
+
+        // Si es Moment.js
+        if (val?.isValid && typeof val.isValid === 'function' && val?.year) {
+            return val.isValid() && val.year() >= 1900;
+        }
+
+        // Para cualquier otro objeto con método getTime()
+        if (val?.getTime && typeof val.getTime === 'function') {
+            const d = new Date(val.getTime());
+            return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
+        }
+        return false;
+    }
+
+    // Add a new function to recalculate states in batch
+    const recalculateStatesInBatch = async (layer, featureIds, fechaCampos) => {
+        try {
+            // Query all features that need updating
+            const query = layer.createQuery();
+            query.objectIds = featureIds;
+            query.outFields = ["*"];
+            query.returnGeometry = false;
+            const { features } = await layer.queryFeatures(query);
+
+            // Prepare updates
+            const updates = features.map(feature => {
+                const newState = detectarEstado(feature.attributes, fechaCampos);
+                return {
+                    attributes: {
+                        OBJECTID: feature.attributes.OBJECTID,
+                        Estado: newState
+                    }
+                };
+            });
+
+            // Apply all updates at once
+            await layer.applyEdits({ updateFeatures: updates });
+        } catch (error) {
+            console.error("Error recalculating states in batch:", error);
+        }
+    };
+
 
     async function handleBatchEditApply(layerIndex, fieldName, isoDateString) {
         const entry = layers[layerIndex];
@@ -114,12 +228,19 @@ const AppContainer = () => {
             const result = await layer.applyEdits({ updateFeatures: updates });
             const fails = (result.updateFeaturesResults || []).filter(r => !r.success);
             if (fails.length) alert("Algunas no se actualizaron");
+
+            const entry = layers[layerIndex];
+            await recalculateStatesInBatch(
+                entry.layer,
+                updates.map(u => u.attributes.OBJECTID),
+                entry.fechaCampos
+            );
         } catch (err) {
             console.error(err);
             alert("Error al actualizar: " + err.message);
         }
 
-        // 7) Close modal (ArcGIS auto-refreshes the view)
+        // 7) Close modal
         setBatchEditOpen(false);
     }
 
@@ -158,9 +279,16 @@ const AppContainer = () => {
         // Ahora sí podemos usar .some de forma segura:
         if (updateResults.some((r) => !r.success)) { }
 
-        // force repaint
-        if (entry.layer.renderer) {
-            entry.layer.renderer = entry.layer.renderer.clone();
+        // Recalculate estado in batch
+        try {
+            const entry = layers[layerIndex];
+            await recalculateStatesInBatch(
+                entry.layer,
+                updates.map(u => u.attributes.OBJECTID),
+                entry.fechaCampos
+            );
+        } catch (error) {
+            console.error("Error recalculating states:", error);
         }
 
         // close & reopen the modal para que re‑consulte y pinte bien
@@ -377,27 +505,11 @@ const AppContainer = () => {
             const etapaCampos = Array.from(etapaCamposSet).sort(sortByNum);
 
 
-            // --- Función para detectar estado principal ---
-            function detectarEstado(feature) {
-                for (let i = fechaCampos.length - 1; i >= 0; i--) {
-                    const fechaCampo = fechaCampos[i];
-                    const fechaVal = feature.properties[fechaCampo];
-                    if (!esFechaValida(fechaVal)) continue;
 
-                    const etapaNumero = parseInt(fechaCampo.match(/\d+/)?.[0], 10);
-                    if (!etapaNumero) return "Sin estado";
-
-                    const etapaCampo = `Etapa ${etapaNumero.toString().padStart(2, "0")}`;
-                    const estadoVal = feature.properties[etapaCampo];
-
-                    return estadoVal && estadoVal.trim() !== "" ? estadoVal.trim() : "Sin estado";
-                }
-                return "Sin estado";
-            }
 
             // --- Recopilar estados ---
             geojson.features.forEach((f) => {
-                estadosSet.add(detectarEstado(f));
+                estadosSet.add(detectarEstado(f.properties, fechaCampos));
                 etapaCampos.forEach((campo) => {
                     const val = f.properties[campo];
                     if (val && val.trim() !== "") estadosSet.add(val.trim());
@@ -625,9 +737,6 @@ return Text(Date(v), "DD/MM/YYYY");
                         }]
                     });
 
-                    // Refrescar la vista
-                    const layerView = await view.whenLayerView(featureLayer);
-                    layerView.refresh();
 
                 } catch (error) {
                     console.error("Error updating feature state:", error);
@@ -701,7 +810,7 @@ return Text(Date(v), "DD/MM/YYYY");
                         });
 
                         // Asignar Estado
-                        propsClean.Estado = detectarEstado(f);
+                        propsClean.Estado = detectarEstado(propsClean, fechaCampos);
 
                         return {
                             geometry,
@@ -749,31 +858,10 @@ return Text(Date(v), "DD/MM/YYYY");
                 updateFeatureState,
                 batchUpdateFeatureStates,
                 // Función para recalcular estado basado en fechas
-                recalculateState: async (featureId) => {
-                    const query = featureLayer.createQuery();
-                    query.objectIds = [featureId];
-                    const { features } = await featureLayer.queryFeatures(query);
+                recalculateState: async (featureIds) => {
+                    if (!Array.isArray(featureIds) || featureIds.length === 0) return;
 
-                    if (!features.length) return;
-
-                    const feature = features[0];
-                    const originalProps = geojson.features.find(f =>
-                        f.properties?.OBJECTID === featureId ||
-                        f.properties?.FID === featureId
-                    )?.properties || {};
-
-                    // Combinar propiedades originales con las actualizadas
-                    const combinedProps = { ...originalProps, ...feature.attributes };
-
-                    // Recalcular estado
-                    const newState = detectarEstado({ properties: combinedProps });
-
-                    // Actualizar si es diferente
-                    if (feature.attributes.Estado !== newState) {
-                        await updateFeatureState(featureId, newState);
-                    }
-
-                    return newState;
+                    await recalculateStatesInBatch(featureLayer, featureIds, fechaCampos);
                 },
                 cleanup: () => {
                     featureLayer.off("refresh", handleLayerUpdates);
