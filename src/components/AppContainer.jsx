@@ -1,6 +1,6 @@
 // src/components/AppContainer.jsx
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import JSZip from "jszip";
 import shpjs from "shpjs";
 import { saveAs } from "file-saver";
@@ -15,14 +15,11 @@ import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 import ExportWorker from "../workers/exportShapefile.worker.js";
 
-
-
-
 const AppContainer = () => {
     // ----- Estados y refs -----
-    const [layers, setLayers] = useState([]);       // lista de entradas de capa
-    const layersRef = useRef([]);                   // ref sincronizado a layers para acceso en closures
-    const layerIdRef = useRef(0);                   // para asignar id incremental a cada capa
+    const [layers, setLayers] = useState([]);
+    const layersRef = useRef([]);
+    const layerIdRef = useRef(0);
     const [menuOpen, setMenuOpen] = useState(false);
     const [selectedCount, setSelectedCount] = useState(0);
     const [batchEditOpen, setBatchEditOpen] = useState(false);
@@ -33,7 +30,8 @@ const AppContainer = () => {
     const [layerIndex, setLayerIndex] = useState(0);
     const [layerTotal, setLayerTotal] = useState(0);
     const [loadingMessage, setLoadingMessage] = useState("");
-    const [stateColors, setStateColors] = useState({}); // <--- nuevo estado
+    const [stateColors, setStateColors] = useState({});
+    const [hiddenStates, setHiddenStates] = useState({});
 
     // Ref al MapView (instancia de ArcGIS MapView)
     const viewRef = useRef(null);
@@ -45,6 +43,53 @@ const AppContainer = () => {
 
     // Ref para el input de archivos
     const fileInputRef = useRef(null);
+
+    // ----- Funciones de filtrado por estado -----
+    const handleToggleStateVisibility = useCallback((layerId, estado, isHidden) => {
+        setHiddenStates(prev => {
+            const newState = { ...prev };
+            if (!newState[layerId]) newState[layerId] = {};
+            newState[layerId][estado] = isHidden;
+            return newState;
+        });
+
+        // Actualizar la capa correspondiente
+        const layerEntry = layersRef.current.find(l => l.id === layerId);
+        if (layerEntry) {
+            updateLayerFilter(layerEntry, estado, isHidden);
+        }
+    }, []);
+
+    const updateLayerFilter = useCallback((layerEntry, estado, isHidden) => {
+        if (!layerEntry?.layer) return;
+
+        try {
+            const currentDefinition = layerEntry.layer.definitionExpression || "";
+            let newDefinition;
+            
+            if (isHidden) {
+                if (currentDefinition.includes("Estado <>")) {
+                    newDefinition = `${currentDefinition} AND Estado <> '${estado}'`;
+                } else if (currentDefinition) {
+                    newDefinition = `${currentDefinition} AND Estado <> '${estado}'`;
+                } else {
+                    newDefinition = `Estado <> '${estado}'`;
+                }
+            } else {
+                newDefinition = currentDefinition
+                    .replace(`AND Estado <> '${estado}'`, '')
+                    .replace(`Estado <> '${estado}'`, '')
+                    .replace(/^\s*AND\s*/, '')
+                    .replace(/\s*AND\s*$/, '');
+                
+                if (!newDefinition.trim()) newDefinition = null;
+            }
+
+            layerEntry.layer.definitionExpression = newDefinition;
+        } catch (error) {
+            console.error("Error updating layer filter:", error);
+        }
+    }, []);
 
     // Update detectarEstado to be more robust
     function detectarEstado(props, fechaCampos) {
@@ -566,6 +611,7 @@ const AppContainer = () => {
 
             // --- Asignar colores ---
             const estadoAColor = {};
+            setStateColors(prev => ({ ...prev, ...estadoAColor }));
             const gradiente = generateRedToGreenGradient(estadosUnicos.length);
             estadosUnicos.forEach((estado, i) => {
                 if (estado === "Sin estado") {
@@ -1178,6 +1224,7 @@ return Text(Date(v), "DD/MM/YYYY");
                     // finally close the menu if you like
                     setMenuOpen(false);
                 }}
+                onToggleStateVisibility={handleToggleStateVisibility}
                 embedded={false}
             />
 

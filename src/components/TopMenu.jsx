@@ -15,7 +15,8 @@ export default function TopMenu({
   onToggleVisibility,
   onCenterView,
   onRemoveLayer,
-  stateColors
+  stateColors,
+  onToggleStateVisibility
 }) {
   const isAndroid = Capacitor.getPlatform() === "android";
   const containerRef = useRef(null);
@@ -111,6 +112,7 @@ export default function TopMenu({
             onRemoveLayer={onRemoveLayer}
             embedded={true}
             stateColors={stateColors}
+            onToggleStateVisibility={onToggleStateVisibility}
           />
         </div>
       </div>

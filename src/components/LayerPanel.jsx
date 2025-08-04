@@ -2,19 +2,21 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
 import { FaChevronRight, FaChevronLeft } from "react-icons/fa";
- 
+
 const LayerPanel = ({
   layers = [],
   onToggleVisibility,
   onCenterView,
   onRemoveLayer,
+  onToggleStateVisibility,
   embedded = false,
 }) => {
   const [isOpen, setIsOpen] = useState(true);
   const [openDetails, setOpenDetails] = useState(null);
+  const [hiddenStates, setHiddenStates] = useState({});
   const statsRef = useRef({});
   const isAndroid = Capacitor.getPlatform() === "android";
- 
+
   // Función para convertir colores a formato CSS
   const toCssColor = useCallback((color) => {
     if (!color) return 'transparent';
@@ -24,7 +26,7 @@ const LayerPanel = ({
     }
     return color;
   }, []);
- 
+
   // Función para obtener el color del borde
   const getBorderColor = useCallback((color, estado) => {
     if (estado === "Sin estado") return "#000";
@@ -34,47 +36,65 @@ const LayerPanel = ({
     }
     return color || "#000";
   }, []);
- 
+
+  // Función para alternar visibilidad de un estado
+  const handleToggleState = useCallback((layerId, estado) => {
+    const isHidden = !hiddenStates[layerId]?.[estado];
+    
+    // Actualizar estado local
+    setHiddenStates(prev => {
+      const newState = { ...prev };
+      if (!newState[layerId]) newState[layerId] = {};
+      newState[layerId][estado] = isHidden;
+      return newState;
+    });
+
+    // Notificar al componente padre
+    if (onToggleStateVisibility) {
+      onToggleStateVisibility(layerId, estado, isHidden);
+    }
+  }, [hiddenStates, onToggleStateVisibility]);
+
   // Efecto para calcular y actualizar estadísticas
   useEffect(() => {
     const abortController = new AbortController();
- 
+
     const updateLayerStats = async () => {
       const updates = {};
- 
+
       await Promise.all(layers.map(async (entry) => {
         if (abortController.signal.aborted || !entry.layer) return;
- 
+
         try {
           // Solo actualizar si la versión cambió
           const currentVersion = entry.version || 0;
           if (statsRef.current[entry.id]?.version === currentVersion) return;
- 
+
           // Consulta optimizada solo para el campo necesario
           const query = entry.layer.createQuery();
           query.outFields = ["Estado"];
           query.returnGeometry = false;
           query.where = "1=1";
- 
+
           const result = await entry.layer.queryFeatures(query);
           const features = result.features;
           const estados = entry.estados || ["Sin estado"];
           const conteos = {};
           const porcentajes = {};
- 
+
           // Contar estados
           features.forEach(f => {
             const estado = f.attributes.Estado || "Sin estado";
             conteos[estado] = (conteos[estado] || 0) + 1;
           });
- 
+
           // Calcular porcentajes
           const total = features.length;
           estados.forEach(e => {
             const count = conteos[e] || 0;
             porcentajes[e] = total > 0 ? Math.round((count / total) * 100) : 0;
           });
- 
+
           updates[entry.id] = {
             version: currentVersion,
             estados,
@@ -86,17 +106,17 @@ const LayerPanel = ({
           console.error(`Error procesando capa ${entry.id}:`, error);
         }
       }));
- 
+
       if (!abortController.signal.aborted) {
         statsRef.current = { ...statsRef.current, ...updates };
       }
     };
- 
+
     updateLayerStats();
    
     return () => abortController.abort();
   }, [layers]);
- 
+
   // Obtener estadísticas actuales
   const getCurrentStats = (layerId) => {
     return statsRef.current[layerId] || {
@@ -106,7 +126,7 @@ const LayerPanel = ({
       stateColors: {}
     };
   };
- 
+
   // Estilos del componente
   const containerStyle = embedded
     ? {
@@ -132,7 +152,7 @@ const LayerPanel = ({
         transition: "width 0.3s",
         zIndex: 1000,
       };
- 
+
   const headerStyle = {
     display: "flex",
     alignItems: "center",
@@ -141,7 +161,7 @@ const LayerPanel = ({
     background: "linear-gradient(90deg, #4facfe, #00f2fe)",
     color: "#fff",
   };
- 
+
   const toggleBtnStyle = {
     background: "none",
     border: "none",
@@ -150,14 +170,14 @@ const LayerPanel = ({
     cursor: "pointer",
     transition: "transform 0.3s",
   };
- 
+
   const contentStyle = {
     display: isOpen ? "block" : "none",
     padding: "8px 12px",
     maxHeight: embedded ? "none" : "60vh",
     overflowY: embedded ? "visible" : "auto",
   };
- 
+
   const layerItemStyle = {
     display: "flex",
     flexDirection: "column",
@@ -167,13 +187,13 @@ const LayerPanel = ({
     padding: "4px",
     backgroundColor: "#f8f9fa",
   };
- 
+
   const topRowStyle = {
     display: "flex",
     alignItems: "center",
     width: "100%",
   };
- 
+
   const textStyle = {
     flex: 1,
     fontSize: 14,
@@ -183,7 +203,7 @@ const LayerPanel = ({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   };
- 
+
   const removeBtnStyle = {
     background: "none",
     border: "none",
@@ -194,7 +214,7 @@ const LayerPanel = ({
     fontSize: 16,
     lineHeight: 1,
   };
- 
+
   const centerBtnStyle = {
     width: "100%",
     padding: "8px",
@@ -209,11 +229,11 @@ const LayerPanel = ({
       backgroundColor: "#019875",
     },
   };
- 
+
   const handleToggleDetails = (id) => {
     setOpenDetails((old) => (old === id ? null : id));
   };
- 
+
   return (
     <div style={containerStyle}>
       <div style={headerStyle}>
@@ -226,27 +246,27 @@ const LayerPanel = ({
           {isOpen ? <FaChevronLeft /> : <FaChevronRight />}
         </button>
       </div>
- 
+
       <div style={contentStyle}>
         {layers.length === 0 && (
           <p style={{ fontStyle: "italic", margin: "8px 0" }}>
             No hay capas cargadas
           </p>
         )}
- {/* CONTENEDOR CON SCROLL */}
-  <div
-    style={{
-      maxHeight: "300px",      
-      overflowY: "auto",        
-      paddingRight: "6px",    
-      marginBottom: "8px",      
-    }}
-  >
-        {layers.map((entry) => {
-          const isOpenLayer = openDetails === entry.id;
+        {/* CONTENEDOR CON SCROLL */}
+        <div
+          style={{
+            maxHeight: "300px",      
+            overflowY: "auto",        
+            paddingRight: "6px",    
+            marginBottom: "8px",      
+          }}
+        >
+          {layers.map((entry) => {
+            const isOpenLayer = openDetails === entry.id;
             const { estados, conteos, porcentajes, stateColors } = getCurrentStats(entry.id);
             const estadosOrdenados = ["Sin estado"].concat(estados.filter(e => e !== "Sin estado"));
- 
+
             return (
               <div key={entry.id} style={layerItemStyle}>
                 <div style={topRowStyle}>
@@ -271,7 +291,7 @@ const LayerPanel = ({
                     🗑️
                   </button>
                 </div>
- 
+
                 {isOpenLayer && (
                   <div style={{
                     backgroundColor: "#f9f9f9",
@@ -288,28 +308,38 @@ const LayerPanel = ({
                         const borderColor = getBorderColor(color, estado);
                         const pct = porcentajes[estado] || 0;
                         const count = conteos[estado] || 0;
- 
+                        const isHidden = hiddenStates[entry.id]?.[estado];
+
                         return (
                           <div
                             key={estado}
                             style={{
                               display: "flex",
                               alignItems: "center",
-                              padding: "2px 0",
+                              padding: "4px 0",
                               overflow: "hidden",
+                              cursor: "pointer",
+                              opacity: isHidden ? 0.5 : 1,
+                              backgroundColor: isHidden ? "#f0f0f0" : "transparent",
+                              borderRadius: "4px",
+                              transition: "all 0.2s ease",
                             }}
                             title={`${estado}: ${pct}% (${count})`}
+                            onClick={() => handleToggleState(entry.id, estado)}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#e9e9e9"}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = isHidden ? "#f0f0f0" : "transparent"}
                           >
                             <span
                               style={{
                                 display: "inline-block",
-                                width: 12,
-                                height: 12,
-                                marginRight: 6,
-                                backgroundColor: toCssColor(color),
-                                border: `3px solid ${borderColor}`,
-                                borderRadius: 2,
+                                width: 14,
+                                height: 14,
+                                marginRight: 8,
+                                backgroundColor: isHidden ? "#aaa" : toCssColor(color),
+                                border: `2px solid ${isHidden ? "#888" : borderColor}`,
+                                borderRadius: 3,
                                 flexShrink: 0,
+                                transition: "all 0.2s ease",
                               }}
                             />
                             <span
@@ -346,7 +376,7 @@ const LayerPanel = ({
             );
           })}
         </div>
- 
+
         {layers.length > 0 && (
           <button
             style={centerBtnStyle}
@@ -361,5 +391,5 @@ const LayerPanel = ({
     </div>
   );
 };
- 
+
 export default React.memo(LayerPanel);
