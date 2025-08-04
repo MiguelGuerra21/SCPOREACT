@@ -72,7 +72,9 @@ export default function BatchEditModal({
     });
   }, [layersWithSel, selectedLayerIdx, allEtapas, refreshId]);
 
-  const [selectedDate, setSelectedDate] = useState("");
+  // precarga hoy en formato ISO date (AAAA-MM-DD)
+const today = new Date().toISOString().slice(0, 10);
+const [selectedDate, setSelectedDate] = useState(today);
   const [selectedEtapaField, setSelectedEtapaField] = useState("");
 
   useEffect(() => {

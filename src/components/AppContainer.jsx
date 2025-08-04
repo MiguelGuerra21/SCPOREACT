@@ -47,82 +47,80 @@ const AppContainer = () => {
 
 
     async function handleBatchEditApply(layerIndex, fieldName, isoDateString) {
-  const entry = layers[layerIndex];
-  if (!entry) {
-    alert("Capa no encontrada");
-    return;
-  }
-  const { layer, selectedIds } = entry;
-  if (!selectedIds.length) {
-    alert("Nada seleccionado");
-    return;
-  }
+        const entry = layers[layerIndex];
+        if (!entry) {
+            alert("Capa no encontrada");
+            return;
+        }
+        const { layer, selectedIds } = entry;
+        if (!selectedIds.length) {
+            alert("Nada seleccionado");
+            return;
+        }
 
-  // 1) Extract the etapa number from the fieldName:
-  const m = fieldName.match(/ET\s*0*?(\d+)$/i);
-  const selNum = m ? parseInt(m[1], 10) : null;
-  if (selNum == null) {
-    alert("Campo inválido");
-    return;
-  }
+        // 1) Extract the etapa number from the fieldName:
+        const m = fieldName.match(/ET\s*0*?(\d+)$/i);
+        const selNum = m ? parseInt(m[1], 10) : null;
+        if (selNum == null) {
+            alert("Campo inválido");
+            return;
+        }
 
-  // 2) Gather all “Fecha ETnn” fields ≤ selNum
-  const allFecha = layer.fields
-    .filter(f => {
-      const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
-      return t && parseInt(t[1], 10) <= selNum;
-    })
-    .map(f => ({
-      name: f.name,
-      num:   parseInt(f.name.match(/\d+$/)[0], 10),
-      type:  f.type
-    }));
+        // 2) Gather all “Fecha ETnn” fields ≤ selNum
+        const allFecha = layer.fields
+            .filter(f => {
+                const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
+                return t && parseInt(t[1], 10) <= selNum;
+            })
+            .map(f => ({
+                name: f.name,
+                num: parseInt(f.name.match(/\d+$/)[0], 10),
+                type: f.type
+            }));
 
-  // 3) Query those fields for all selected features
-  const q = layer.createQuery();
-  q.where         = `${layer.objectIdField} IN (${selectedIds.join(",")})`;
-  q.outFields     = [layer.objectIdField, ...allFecha.map(f => f.name)];
-  q.returnGeometry = false;
-  const res = await layer.queryFeatures(q);
+        // 3) Query those fields for all selected features
+        const q = layer.createQuery();
+        q.where = `${layer.objectIdField} IN (${selectedIds.join(",")})`;
+        q.outFields = [layer.objectIdField, ...allFecha.map(f => f.name)];
+        q.returnGeometry = false;
+        const res = await layer.queryFeatures(q);
 
-  // 4) Parse the ISO date string once
-  const chosenTime = Date.parse(isoDateString);
+        // 4) Parse the ISO date string once
+        const chosenTime = Date.parse(isoDateString);
 
-  // 5) Build updates: per feature
-  const updates = res.features.map(feat => {
-    const attrs = { OBJECTID: feat.attributes[layer.objectIdField] };
-    allFecha.forEach(f => {
-      const cur = feat.attributes[f.name];
-      const isEmpty = cur == null || cur === "" || cur === 0;
-      // set if it's the selected etapa, OR an earlier empty one
-      if (f.num === selNum || (f.num < selNum && isEmpty)) {
-        // if field type is "date", use epoch millis; otherwise string
-        attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
-      }
-    });
-    return { attributes: attrs };
-  });
+        // 5) Build updates: per feature
+        const updates = res.features.map(feat => {
+            const attrs = { OBJECTID: feat.attributes[layer.objectIdField] };
+            allFecha.forEach(f => {
+                const cur = feat.attributes[f.name];
+                const isEmpty = cur == null || cur === "" || cur === 0;
+                // set if it's the selected etapa, OR an earlier empty one
+                if (f.num === selNum || (f.num < selNum && isEmpty)) {
+                    // if field type is "date", use epoch millis; otherwise string
+                    attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
+                }
+            });
+            return { attributes: attrs };
+        });
 
-  if (!updates.length) {
-    alert("Nada que actualizar");
-    return;
-  }
+        if (!updates.length) {
+            alert("Nada que actualizar");
+            return;
+        }
 
-  // 6) Apply edits
-  try {
-    const result = await layer.applyEdits({ updateFeatures: updates });
-    const fails = (result.updateFeaturesResults || []).filter(r => !r.success);
-    if (fails.length) alert("Algunas no se actualizaron");
-  } catch (err) {
-    console.error(err);
-    alert("Error al actualizar: " + err.message);
-  }
+        // 6) Apply edits
+        try {
+            const result = await layer.applyEdits({ updateFeatures: updates });
+            const fails = (result.updateFeaturesResults || []).filter(r => !r.success);
+            if (fails.length) alert("Algunas no se actualizaron");
+        } catch (err) {
+            console.error(err);
+            alert("Error al actualizar: " + err.message);
+        }
 
-  // 7) Close modal (ArcGIS auto-refreshes the view)
-  setBatchEditOpen(false);
-}
-
-
+        // 7) Close modal (ArcGIS auto-refreshes the view)
+        setBatchEditOpen(false);
+    }
 
 
 
@@ -280,6 +278,19 @@ const AppContainer = () => {
             const arrayBuffer = await file.arrayBuffer();
             const zip = await JSZip.loadAsync(arrayBuffer);
 
+            //  — LOG: lista de archivos y contenido de .cpg original (si existe)
+            console.log("ZIP cargado, entries:", Object.keys(zip.files));
+            let encoding = "UTF-8";
+        const cpgEntry = Object.keys(zip.files)
+            .find(n => n.toLowerCase().endsWith(".cpg"));
+        if (cpgEntry) {
+            const cpgText = (await zip.file(cpgEntry).async("string")).trim();
+            console.log(".cpg original encontrado:", cpgEntry, "→", cpgText);
+            encoding = cpgText || encoding;
+        } else {
+            console.log("No se encontró archivo .cpg; usando UTF-8 por defecto");
+        }
+
             setLoadingMessage("Validando archivos");
             const hasPrj = Object.keys(zip.files).some(name =>
                 name.toLowerCase().endsWith(".prj")
@@ -293,7 +304,8 @@ const AppContainer = () => {
 
             //Parsear el shapefile
             setLoadingMessage("Parseando shapefile y construyendo features ");
-            const geojson = await shpjs(arrayBuffer , "UTF-8");
+            const geojson = await shpjs(arrayBuffer, {encoding});
+            console.log("🛠 GEOJSON al reabrir shapefile:", geojson.features[0].properties);
 
             if (!geojson?.features?.length) {
                 console.warn("No se encontraron features válidas en el shapefile:", file.name);
@@ -304,35 +316,35 @@ const AppContainer = () => {
             function esFechaValida(val) {
                 // Si el valor es null/undefined
                 if (val == null) return false;
-    
+
                 // Si es un timestamp numérico (como 1753826400000)
                 if (typeof val === 'number') {
                     // Verificamos que sea un timestamp razonable (entre 1970 y 2100)
                     const year = new Date(val).getFullYear();
                     return year >= 1900 && year <= 2100;
                 }
-    
+
                 // Si es instancia de Date
                 if (val instanceof Date) {
                     return !isNaN(val.getTime()) && val.getFullYear() >= 1900;
                 }
-    
+
                 // Si es string
                 if (typeof val === 'string' && val.trim() !== '') {
                     const d = new Date(val);
                     return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
                 }
-    
+
                 // Si es DateTime de Luxon
                 if (val?.isValid && typeof val.isValid === 'function') {
                     return val.isValid() && val.year >= 1900;
                 }
-    
+
                 // Si es Moment.js
                 if (val?.isValid && typeof val.isValid === 'function' && val?.year) {
                     return val.isValid() && val.year() >= 1900;
                 }
-    
+
                 // Para cualquier otro objeto con método getTime()
                 if (val?.getTime && typeof val.getTime === 'function') {
                     const d = new Date(val.getTime());
@@ -424,6 +436,11 @@ const AppContainer = () => {
             // --- Crear campos dinámicos ---
             const firstProps = geojson.features[0]?.properties || {};
             const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
+                // 1) si el nombre de campo es "Fecha …", lo marcamos date
+                if (/^Fecha\s+/i.test(key)) {
+                    return { name: key, alias: key, type: "date" };
+                }
+                // 2) resto de inferencia normal
                 let type;
                 if (typeof value === "number") type = "double";
                 else if (typeof value === "boolean") type = "boolean";
@@ -577,8 +594,11 @@ const AppContainer = () => {
                         })
                     }]
                 }
-
             });
+
+
+
+
             // --- Configurar eventos para esta capa específica ---
             const handleLayerUpdates = () => {
                 setLayers(prev => prev.map(layer => {
@@ -786,121 +806,158 @@ const AppContainer = () => {
     };
 
     const exportLayerAsShapefile = async (entry) => {
-        const { layer, name } = entry;
-        if (!layer) {
-            alert("No hay capa para exportar.");
-            return;
+  const { layer, name, fechaCampos } = entry; // observa que añadimos fechaCampos al entry
+  if (!layer) {
+    alert("No hay capa para exportar.");
+    return;
+  }
+
+  try {
+    setLoadingMessage("Consultando entidades...");
+    setProgress(0);
+
+    // 1. Consultar todas las features
+    const query = layer.createQuery();
+    query.where = "1=1";
+    query.returnGeometry = true;
+    query.outFields = ["*"];
+    const result = await layer.queryFeatures(query);
+
+    if (!result.features.length) {
+      alert("No hay entidades válidas para exportar.");
+      return;
+    }
+
+    // 2. Construir GeoJSON con Date reales
+    setLoadingMessage("Construyendo GeoJSON...");
+    const features = result.features.map((f) => {
+      // convertir geometría
+      let geom = f.geometry;
+      if (geom.spatialReference?.isWebMercator) {
+        geom = webMercatorToGeographic(geom);
+      }
+      let geometry = null;
+      switch (geom.type) {
+        case "point":
+          geometry = { type: "Point", coordinates: [geom.x, geom.y] };
+          break;
+        case "polyline":
+          geometry =
+            geom.paths.length > 1
+              ? { type: "MultiLineString", coordinates: geom.paths }
+              : { type: "LineString", coordinates: geom.paths[0] };
+          break;
+        case "polygon":
+          geometry = { type: "Polygon", coordinates: geom.rings };
+          break;
+        default:
+          return null;
+      }
+
+      // copiar atributos y convertir fechas
+      const propsClean = { ...f.attributes };
+      fechaCampos.forEach((field) => {
+        const raw = f.attributes[field];
+        if (raw != null && raw !== "") {
+          // Si es timestamp numérico o string ISO, lo pasamos a Date
+          propsClean[field] = new Date(raw);
+        } else {
+          propsClean[field] = null;
         }
+      });
 
-        try {
-            setLoadingMessage("Consultando entidades...");
-            setProgress(0);
+      return {
+        type: "Feature",
+        geometry,
+        properties: propsClean,
+      };
+    }).filter(Boolean);
 
-            // 1. Consultar todas las features
-            const query = layer.createQuery();
-            query.where = "1=1";
-            query.returnGeometry = true;
-            query.outFields = ["*"];
-            const result = await layer.queryFeatures(query);
-
-            if (!result.features.length) {
-                alert("No hay entidades válidas para exportar.");
-                return;
-            }
-
-            // 2. Construir GeoJSON
-            setLoadingMessage("Construyendo GeoJSON...");
-            const geojson = {
-                type: "FeatureCollection",
-                features: result.features
-                    .map((f) => {
-                        let geom = f.geometry;
-                        if (geom.spatialReference?.isWebMercator) {
-                            geom = webMercatorToGeographic(geom);
-                        }
-                        let geometry = null;
-                        switch (geom.type) {
-                            case "point":
-                                geometry = { type: "Point", coordinates: [geom.x, geom.y] };
-                                break;
-                            case "polyline":
-                                geometry = geom.paths.length > 1
-                                    ? { type: "MultiLineString", coordinates: geom.paths }
-                                    : { type: "LineString", coordinates: geom.paths[0] };
-                                break;
-                            case "polygon":
-                                geometry = { type: "Polygon", coordinates: geom.rings };
-                                break;
-                            default:
-                                return null;
-                        }
-                        return {
-                            type: "Feature",
-                            geometry,
-                            properties: { ...f.attributes }
-                        };
-                    })
-                    .filter(Boolean)
-            };
-
-            // 3. Llamar al worker para generar ZIP base64
-            setLoadingMessage("Generando archivo ZIP…");
-            const worker = new ExportWorker();
-            const zipBlob = await new Promise((resolve, reject) => {
-                worker.onmessage = (e) => {
-                    const { type, blob, message } = e.data;
-                    if (type === "done" && blob && blob.size > 100) {
-                        resolve(blob);
-                    } else {
-                        reject(new Error(message || "Error en el worker"));
-                    }
-                    worker.terminate();
-                };
-                worker.onerror = (err) => {
-                    reject(err);
-                    worker.terminate();
-                };
-                worker.postMessage({ geojson });
-            });
-
-            // 4. Renombrar todos los archivos dentro del ZIP para usar el nombre de capa
-            setLoadingMessage("Reetiquetando archivos…");
-            const arrayBuffer = await zipBlob.arrayBuffer();
-            const origZip = await JSZip.loadAsync(arrayBuffer);
-            const newZip = new JSZip();
-            // Sanitize layer name for file-system
-            const base = name.replace(/[^a-z0-9]/gi, "_").toLowerCase();
-            await Promise.all(
-                Object.keys(origZip.files).map(async (path) => {
-                    const fileData = await origZip.file(path).async("arraybuffer");
-                    const ext = path.slice(path.lastIndexOf(".")).toLowerCase(); // e.g. “.shp”
-                    newZip.file(`${base}${ext}`, fileData);
-                })
-            );
-            newZip.file(`${base}.cpg`, "UTF-8"); // Añadir archivo de codificación
-            const finalBlob = await newZip.generateAsync({ type: "blob" });
-
-            // 5. Guardar ZIP resultante
-            setLoadingMessage("Guardando archivo…");
-            const fileName = `${base}.zip`;
-            saveAs(finalBlob, fileName);
-
-            alert("Shapefile exportado correctamente: " + fileName);
-
-        } catch (err) {
-            console.error("Error en exportLayerAsShapefile:", err);
-            alert(`Error al exportar: ${err.message}`);
-        } finally {
-            // reset UI loader/progress
-            setTimeout(() => {
-                setLoading(false);
-                setLoadingMessage("");
-                setProgress(0);
-                setProgressCurrent(0);
-                setProgressTotal(0);
-            }, 500);
-        }
+    const geojson = {
+      type: "FeatureCollection",
+      features,
     };
+
+    // 3. Llamar al worker para generar ZIP base64
+    setLoadingMessage("Generando archivo ZIP…");
+    const worker = new ExportWorker();
+    const zipBlob = await new Promise((resolve, reject) => {
+      worker.onmessage = (e) => {
+        const { type, blob, message } = e.data;
+        if (type === "done" && blob && blob.size > 100) {
+          resolve(blob);
+        } else {
+          reject(new Error(message || "Error en el worker"));
+        }
+        worker.terminate();
+      };
+      worker.onerror = (err) => {
+        reject(err);
+        worker.terminate();
+      };
+
+geojson.features.forEach((feature) => {
+  fechaCampos.forEach((campo) => {
+    const val = feature.properties[campo];
+    if (!(val instanceof Date)) {
+      const parsed = new Date(val);
+      if (!isNaN(parsed)) {
+        feature.properties[campo] = parsed;
+      } else {
+        delete feature.properties[campo]; // o pon null si prefieres
+      }
+    }
+  });
+});
+
+      // enviamos también la lista de campos fecha para que el worker los marque
+      worker.postMessage({ geojson, dateFieldNames: fechaCampos });
+    });
+
+    // 4. Renombrar archivos dentro del ZIP
+    setLoadingMessage("Reetiquetando archivos…");
+    const arrayBuffer = await zipBlob.arrayBuffer();
+    const origZip = await JSZip.loadAsync(arrayBuffer);
+    const newZip = new JSZip();
+    const base = name.replace(/[^a-z0-9]/gi, "_").toLowerCase();
+
+    await Promise.all(
+      Object.keys(origZip.files).map(async (path) => {
+        const fileData = await origZip.file(path).async("arraybuffer");
+        const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
+        newZip.file(`${base}${ext}`, fileData);
+      })
+    );
+    // añadimos .cpg con la codificación usada por el worker
+    newZip.file(`${base}.cpg`, "1252");
+
+    const finalBlob = await newZip.generateAsync({ type: "blob" });
+
+    // 5. Guardar ZIP resultante
+    setLoadingMessage("Guardando archivo…");
+    const fileName = `${base}.zip`;
+    saveAs(finalBlob, fileName);
+
+    alert("Shapefile exportado correctamente: " + fileName);
+  } catch (err) {
+    console.error("Error en exportLayerAsShapefile:", err);
+    alert(`Error al exportar: ${err.message}`);
+  } finally {
+    // reset UI loader/progress
+    setTimeout(() => {
+      setLoading(false);
+      setLoadingMessage("");
+      setProgress(0);
+      setProgressCurrent(0);
+      setProgressTotal(0);
+    }, 500);
+  }
+};
+
+
+
+
+
 
     // Función auxiliar para Blob a Base64
     function blobToBase64(blob, onProgress) {
