@@ -17,6 +17,7 @@ import ExportWorker from "../workers/exportShapefile.worker.js";
 
 
 
+
 const AppContainer = () => {
     // ----- Estados y refs -----
     const [layers, setLayers] = useState([]);       // lista de entradas de capa
@@ -122,8 +123,6 @@ const AppContainer = () => {
         setBatchEditOpen(false);
     }
 
-
-
     async function handleClearEtapa(layerIdx, dateField) {
         const entry = layers[layerIdx];
         if (!entry) return window.alert("Capa no encontrada");
@@ -168,9 +167,6 @@ const AppContainer = () => {
         setBatchEditOpen(false);
         setTimeout(() => setBatchEditOpen(true), 0);
     }
-
-
-
 
 
     // Sincronizar layersRef.current siempre que cambie layers
@@ -253,6 +249,7 @@ const AppContainer = () => {
 
     // ----- Manejador de apertura de archivo (shapefile ZIP) -----
     const handleFileOpen = async (file) => {
+
         const view = viewRef.current;
         if (!file || !view) return;
 
@@ -278,18 +275,21 @@ const AppContainer = () => {
             const arrayBuffer = await file.arrayBuffer();
             const zip = await JSZip.loadAsync(arrayBuffer);
 
-            //  — LOG: lista de archivos y contenido de .cpg original (si existe)
-            console.log("ZIP cargado, entries:", Object.keys(zip.files));
+            // Leer encoding de .cpg (o UTF-8 por defecto)
             let encoding = "UTF-8";
-        const cpgEntry = Object.keys(zip.files)
-            .find(n => n.toLowerCase().endsWith(".cpg"));
-        if (cpgEntry) {
-            const cpgText = (await zip.file(cpgEntry).async("string")).trim();
-            console.log(".cpg original encontrado:", cpgEntry, "→", cpgText);
-            encoding = cpgText || encoding;
-        } else {
-            console.log("No se encontró archivo .cpg; usando UTF-8 por defecto");
-        }
+            const cpgEntry = Object.keys(zip.files).find(n => n.toLowerCase().endsWith(".cpg"));
+            if (cpgEntry) {
+                const txt = (await zip.file(cpgEntry).async("string")).trim();
+                console.log(".cpg original:", cpgEntry, "→", txt);
+                encoding = txt || encoding;
+            }
+
+            // Parsear con shpjs
+            const geojson = await shpjs(arrayBuffer, { encoding });
+
+            
+
+            console.log("🛠 GEOJSON tras conversión a Date:", geojson.features[0].properties);
 
             setLoadingMessage("Validando archivos");
             const hasPrj = Object.keys(zip.files).some(name =>
@@ -304,8 +304,6 @@ const AppContainer = () => {
 
             //Parsear el shapefile
             setLoadingMessage("Parseando shapefile y construyendo features ");
-            const geojson = await shpjs(arrayBuffer, {encoding});
-            console.log("🛠 GEOJSON al reabrir shapefile:", geojson.features[0].properties);
 
             if (!geojson?.features?.length) {
                 console.warn("No se encontraron features válidas en el shapefile:", file.name);
@@ -377,6 +375,17 @@ const AppContainer = () => {
 
             const fechaCampos = Array.from(fechaCamposSet).sort(sortByNum);
             const etapaCampos = Array.from(etapaCamposSet).sort(sortByNum);
+
+            // — convert ISO YYYY-MM-DD strings back to Date objects —
+            (fechaCampos || []).forEach(fieldName => {
+                geojson.features.forEach(feat => {
+                    const val = feat.properties[fieldName];
+                    // test for the exact ISO‐format you wrote out
+                    if (typeof val === "string" && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+                        feat.properties[fieldName] = new Date(val);
+                    }
+                });
+            });
 
 
             // --- Función para detectar estado principal ---
@@ -557,40 +566,26 @@ const AppContainer = () => {
 
 
                 popupTemplate: {
-                    title: `${nameWithoutExt} - ID: {fid}`,
-
-                    // 2) Para cada "Fecha …" definimos una expresión Arcade
+                    title: `${nameWithoutExt} - ID {fid}`,
                     expressionInfos: fechaFields.map(f => ({
                         name: f.exprName,
                         title: f.alias,
                         expression: `
-      var v = $feature["${f.originalName}"];
-      if (IsEmpty(v)) {
-        return "";
-      }
-      // forzamos a Date incluso si viene como string
-      var dt = Date(v);
-      // formatea día/mes/año y hora
-      return Text(dt, 'DD/MM/YYYY');
+      var s = $feature["${f.originalName}"];
+      if (IsEmpty(s)) return "";
+      var parts = Split(s, "-");      // ["2025","08","04"]
+      var d = Date(parts[0], parts[1]-1, parts[2]);
+      return Text(d, "DD/MM/YYYY");
     `
                     })),
-
                     content: [{
                         type: "fields",
                         fieldInfos: dynamicFields.map(f => {
-                            // si es un campo "Fecha …" usamos la expresión en lugar de f.name
                             const fecha = fechaFields.find(x => x.originalName === f.name);
                             if (fecha) {
-                                return {
-                                    fieldName: `expression/${fecha.exprName}`,
-                                    label: f.alias
-                                };
+                                return { fieldName: `expression/${fecha.exprName}`, label: f.alias };
                             }
-                            // resto de campos normales
-                            return {
-                                fieldName: f.name,
-                                label: f.alias
-                            };
+                            return { fieldName: f.name, label: f.alias };
                         })
                     }]
                 }
@@ -805,154 +800,93 @@ const AppContainer = () => {
         }
     };
 
-    const exportLayerAsShapefile = async (entry) => {
-  const { layer, name, fechaCampos } = entry; // observa que añadimos fechaCampos al entry
-  if (!layer) {
-    alert("No hay capa para exportar.");
-    return;
-  }
+    async function exportLayerAsShapefile(entry) {
+        const { layer, name, fechaCampos } = entry;
 
-  try {
-    setLoadingMessage("Consultando entidades...");
-    setProgress(0);
+        // 1) Query
+        const q = layer.createQuery();
+        q.where = "1=1";
+        q.returnGeometry = true;
+        q.outFields = ["*"];
+        const { features: arcFeatures } = await layer.queryFeatures(q);
 
-    // 1. Consultar todas las features
-    const query = layer.createQuery();
-    query.where = "1=1";
-    query.returnGeometry = true;
-    query.outFields = ["*"];
-    const result = await layer.queryFeatures(query);
+        // 2) GeoJSON con fechas como "YYYY-MM-DD"
+        const features = arcFeatures.map(f => {
+            // 2.a) geometría → GeoJSON
+            let geom = f.geometry;
+            if (geom.spatialReference?.isWebMercator) {
+                geom = webMercatorToGeographic(geom);
+            }
+            let geometry;
+            switch (geom.type) {
+                case "point":
+                    geometry = { type: "Point", coordinates: [geom.x, geom.y] };
+                    break;
+                case "polyline":
+                    geometry = geom.paths.length > 1
+                        ? { type: "MultiLineString", coordinates: geom.paths }
+                        : { type: "LineString", coordinates: geom.paths[0] };
+                    break;
+                case "polygon":
+                    geometry = { type: "Polygon", coordinates: geom.rings };
+                    break;
+                default:
+                    return null;
+            }
 
-    if (!result.features.length) {
-      alert("No hay entidades válidas para exportar.");
-      return;
+            // 2.b) atributos + fechas como ISO strings
+            const props = { ...f.attributes };
+            fechaCampos.forEach(field => {
+                const raw = f.attributes[field];
+                if (raw != null && raw !== "") {
+                    const d = new Date(raw);
+                    const Y = d.getFullYear();
+                    const M = String(d.getMonth() + 1).padStart(2, "0");
+                    const D = String(d.getDate()).padStart(2, "0");
+                    props[field] = `${Y}-${M}-${D}`;
+                } else {
+                    props[field] = "";
+                }
+            });
+
+            return { type: "Feature", geometry, properties: props };
+        }).filter(Boolean);
+
+        const geojson = { type: "FeatureCollection", features };
+
+        // 3) Worker
+        const worker = new ExportWorker();
+        const zipBlob = await new Promise((resolve, reject) => {
+            worker.onmessage = e => {
+                if (e.data.type === "done") resolve(e.data.blob);
+                else reject(new Error(e.data.message));
+                worker.terminate();
+            };
+            worker.onerror = err => { reject(err); worker.terminate(); };
+            // enviamos la lista de campos (por si queremos tratarlos en el worker)
+            worker.postMessage({ geojson, dateFieldNames: fechaCampos });
+        });
+
+        // 4) renombrar entradas ZIP y poner .cpg
+        const buf = await zipBlob.arrayBuffer();
+        const origZ = await JSZip.loadAsync(buf);
+        const newZ = new JSZip();
+        const base = name.replace(/[^a-z0-9]/gi, "_").toLowerCase();
+
+        await Promise.all(Object.keys(origZ.files).map(async path => {
+            const data = await origZ.file(path).async("arraybuffer");
+            const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
+            newZ.file(`${base}${ext}`, data);
+        }));
+        newZ.file(`${base}.cpg`, "CP1252");
+
+        const final = await newZ.generateAsync({ type: "blob" });
+        saveAs(final, `${base}.zip`);
     }
 
-    // 2. Construir GeoJSON con Date reales
-    setLoadingMessage("Construyendo GeoJSON...");
-    const features = result.features.map((f) => {
-      // convertir geometría
-      let geom = f.geometry;
-      if (geom.spatialReference?.isWebMercator) {
-        geom = webMercatorToGeographic(geom);
-      }
-      let geometry = null;
-      switch (geom.type) {
-        case "point":
-          geometry = { type: "Point", coordinates: [geom.x, geom.y] };
-          break;
-        case "polyline":
-          geometry =
-            geom.paths.length > 1
-              ? { type: "MultiLineString", coordinates: geom.paths }
-              : { type: "LineString", coordinates: geom.paths[0] };
-          break;
-        case "polygon":
-          geometry = { type: "Polygon", coordinates: geom.rings };
-          break;
-        default:
-          return null;
-      }
 
-      // copiar atributos y convertir fechas
-      const propsClean = { ...f.attributes };
-      fechaCampos.forEach((field) => {
-        const raw = f.attributes[field];
-        if (raw != null && raw !== "") {
-          // Si es timestamp numérico o string ISO, lo pasamos a Date
-          propsClean[field] = new Date(raw);
-        } else {
-          propsClean[field] = null;
-        }
-      });
 
-      return {
-        type: "Feature",
-        geometry,
-        properties: propsClean,
-      };
-    }).filter(Boolean);
 
-    const geojson = {
-      type: "FeatureCollection",
-      features,
-    };
-
-    // 3. Llamar al worker para generar ZIP base64
-    setLoadingMessage("Generando archivo ZIP…");
-    const worker = new ExportWorker();
-    const zipBlob = await new Promise((resolve, reject) => {
-      worker.onmessage = (e) => {
-        const { type, blob, message } = e.data;
-        if (type === "done" && blob && blob.size > 100) {
-          resolve(blob);
-        } else {
-          reject(new Error(message || "Error en el worker"));
-        }
-        worker.terminate();
-      };
-      worker.onerror = (err) => {
-        reject(err);
-        worker.terminate();
-      };
-
-geojson.features.forEach((feature) => {
-  fechaCampos.forEach((campo) => {
-    const val = feature.properties[campo];
-    if (!(val instanceof Date)) {
-      const parsed = new Date(val);
-      if (!isNaN(parsed)) {
-        feature.properties[campo] = parsed;
-      } else {
-        delete feature.properties[campo]; // o pon null si prefieres
-      }
-    }
-  });
-});
-
-      // enviamos también la lista de campos fecha para que el worker los marque
-      worker.postMessage({ geojson, dateFieldNames: fechaCampos });
-    });
-
-    // 4. Renombrar archivos dentro del ZIP
-    setLoadingMessage("Reetiquetando archivos…");
-    const arrayBuffer = await zipBlob.arrayBuffer();
-    const origZip = await JSZip.loadAsync(arrayBuffer);
-    const newZip = new JSZip();
-    const base = name.replace(/[^a-z0-9]/gi, "_").toLowerCase();
-
-    await Promise.all(
-      Object.keys(origZip.files).map(async (path) => {
-        const fileData = await origZip.file(path).async("arraybuffer");
-        const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
-        newZip.file(`${base}${ext}`, fileData);
-      })
-    );
-    // añadimos .cpg con la codificación usada por el worker
-    newZip.file(`${base}.cpg`, "1252");
-
-    const finalBlob = await newZip.generateAsync({ type: "blob" });
-
-    // 5. Guardar ZIP resultante
-    setLoadingMessage("Guardando archivo…");
-    const fileName = `${base}.zip`;
-    saveAs(finalBlob, fileName);
-
-    alert("Shapefile exportado correctamente: " + fileName);
-  } catch (err) {
-    console.error("Error en exportLayerAsShapefile:", err);
-    alert(`Error al exportar: ${err.message}`);
-  } finally {
-    // reset UI loader/progress
-    setTimeout(() => {
-      setLoading(false);
-      setLoadingMessage("");
-      setProgress(0);
-      setProgressCurrent(0);
-      setProgressTotal(0);
-    }, 500);
-  }
-};
 
 
 
@@ -1086,6 +1020,7 @@ geojson.features.forEach((feature) => {
 
     // ----- Exportar como Shapefile: abrir modal -----
     const [exportModalOpen, setExportModalOpen] = useState(false);
+
     const handleExportRequest = () => {
         if (layers.length === 0) {
             window.alert("No hay capas cargadas para guardar.");
