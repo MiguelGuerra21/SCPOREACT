@@ -559,22 +559,29 @@ const AppContainer = () => {
                     expressionInfos: fechaFields.map(f => ({
                         name: f.exprName,
                         title: f.alias,
+                        // handle Date, number, or ISO string all in one go:
                         expression: `
-      var s = $feature["${f.originalName}"];
-      if (IsEmpty(s)) return "";
-      var parts = Split(s, "-");      // ["2025","08","04"]
-      var d = Date(parts[0], parts[1]-1, parts[2]);
-      return Text(d, "DD/MM/YYYY");
-    `
+var v = $feature["${f.originalName}"];
+if (IsEmpty(v)) {
+  return "";
+}
+return Text(Date(v), "DD/MM/YYYY");
+`
                     })),
                     content: [{
                         type: "fields",
-                        fieldInfos: dynamicFields.map(f => {
-                            const fecha = fechaFields.find(x => x.originalName === f.name);
+                        fieldInfos: dynamicFields.map(fld => {
+                            const fecha = fechaFields.find(x => x.originalName === fld.name);
                             if (fecha) {
-                                return { fieldName: `expression/${fecha.exprName}`, label: f.alias };
+                                return {
+                                    fieldName: `expression/${fecha.exprName}`,
+                                    label: fld.alias
+                                };
                             }
-                            return { fieldName: f.name, label: f.alias };
+                            return {
+                                fieldName: fld.name,
+                                label: fld.alias
+                            };
                         })
                     }]
                 }
