@@ -1037,24 +1037,14 @@ return Text(Date(v), "DD/MM/YYYY");
                 }
             }
             // Restablecer vista al estado inicial capturado
-            if (initialCenterRef.current && initialZoomRef.current != null) {
-                view
-                    .goTo({
-                        center: initialCenterRef.current,
-                        zoom: initialZoomRef.current,
-                    })
-                    .catch((err) =>
-                        console.error("Error al restablecer vista inicial:", err)
-                    );
-            } else if (initialExtentRef.current) {
-                view
-                    .goTo({
-                        target: initialExtentRef.current,
-                    })
-                    .catch((err) =>
-                        console.error("Error al restablecer extensión inicial:", err)
-                    );
-            }
+            view
+                .goTo({
+                    center: [-3.7038, 40.4168],
+                    zoom: 5
+                })
+                .catch(err =>
+                    console.error("Error al centrar en España tras limpiar:", err)
+                );
         }
         // Limpiar estado React
         setLayers([]);
