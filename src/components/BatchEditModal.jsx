@@ -251,8 +251,8 @@ const handleClearAllEtapas = async () => {
             ))}
           </div>
 
-          <div style={{ marginTop: 12 }}>
-            <label style={label}>Fecha a aplicar:</label>
+          <label style={label}>Fecha a aplicar:</label>
+          <div style={inputStyle}>
             <input
               type="date"
               style={selectStyle}
@@ -285,6 +285,7 @@ const header       = { padding: "12px 16px", background: "linear-gradient(90deg,
 const title        = { margin: 0, fontSize: 18 };
 const closeBtn     = { background: "none", border: "none", color: "#fff", fontSize: 20, cursor: "pointer" };
 const body         = { padding: 16, display: "flex", flexDirection: "column", gap: 12 };
+const inputStyle   = { paddingRight: 16, display: "flex", flexDirection: "column", gap: 12}
 const label        = { display: "block", marginBottom: 4 };
 const selectStyle  = { width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc", fontSize: 14 };
 const listContainer= { maxHeight: 180, overflowY: "auto", border: "1px solid #ccc", borderRadius: 4, padding: 8 };
