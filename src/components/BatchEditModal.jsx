@@ -137,9 +137,9 @@ const handleClearAllEtapas = async () => {
     return;
   }
 
-  // 1) Validar que el campo es tipo Date puro
   const etapaInfo = allEtapas.find(e => e.dateField === selectedEtapaField);
   if (!etapaInfo) return;
+  
   if (etapaInfo.type !== "date") {
     window.alert(`El campo ${selectedEtapaField} no es de tipo Date puro`);
     return;
@@ -149,45 +149,63 @@ const handleClearAllEtapas = async () => {
   try {
     const lw = layersWithSel.find(l => l.idx === selectedLayerIdx);
     const { layer, selectedIds } = lw.entry;
-
-    // 2) Etapas a procesar: todas con num ≤ selNum
     const selNum = etapaInfo.num;
+
+    // 1. Get all etapas with num <= selNum including their name fields
     const toUpdate = allEtapas.filter(e => e.num <= selNum);
-    const outFields = toUpdate.map(e => e.dateField);
 
-    // 3) Query de todas las entidades seleccionadas para leer sus valores actuales
+    // 2. Query all needed fields (name fields + date fields)
+    const outFields = [
+      layer.objectIdField,
+      ...toUpdate.map(e => e.dateField),
+      ...toUpdate.map(e => e.nameField)
+    ];
+
     const q = layer.createQuery();
-    q.where       = `${layer.objectIdField} IN (${selectedIds.join(",")})`;
-    q.outFields   = [layer.objectIdField, ...outFields];
+    q.where = `${layer.objectIdField} IN (${selectedIds.join(",")})`;
+    q.outFields = outFields;
     q.returnGeometry = false;
+    
     const { features } = await layer.queryFeatures(q);
-
-    // 4) Convertir selectedDate ("YYYY-MM-DD") a milisegundos
     const dateMS = Date.parse(selectedDate);
 
-    // 5) Construir updates: por cada feature, actualizar:
-    //    • selectedEtapaField → dateMS
-    //    • cualquier toUpdate previo sin valor → dateMS
-    //    • dejar intactas aquellas previas con valor
+    // 3. Build updates with name field check
     const updates = features.map(feat => {
-      const oidField = layer.objectIdField;
-      const attrs = { [oidField]: feat.attributes[oidField] };
+      const oid = feat.attributes[layer.objectIdField];
+      const attrs = { [layer.objectIdField]: oid };
+
       toUpdate.forEach(e => {
-        const curVal = feat.attributes[e.dateField];
-        const isEmpty = curVal == null || curVal === "" || curVal === 0;
-        if (e.dateField === selectedEtapaField || isEmpty) {
+        const dateValue = feat.attributes[e.dateField];
+        const nameValue = feat.attributes[e.nameField];
+        const isEmptyDate = !dateValue || dateValue === "" || dateValue === 0;
+        const isEmptyName = !nameValue || nameValue === "" || nameValue === 0;
+
+        // Skip if name is empty
+        if (isEmptyName) return;
+
+        // Update if:
+        // - It's the target etapa, OR
+        // - It's a previous etapa with empty date
+        if (e.num === selNum || (e.num < selNum && isEmptyDate)) {
           attrs[e.dateField] = dateMS;
         }
       });
+
       return { attributes: attrs };
     });
 
-    // 6) Aplicar edits
-    const result = await layer.applyEdits({ updateFeatures: updates });
+    // Filter out updates with no changes
+    const validUpdates = updates.filter(u => Object.keys(u.attributes).length > 1);
+
+    if (validUpdates.length === 0) {
+      window.alert("Nada que actualizar");
+      return;
+    }
+
+    const result = await layer.applyEdits({ updateFeatures: validUpdates });
     const fails = result.updateFeaturesResults?.filter(r => !r.success) || [];
     if (fails.length) window.alert("Algunos no se actualizaron");
 
-    // 7) Refresca y notifica al padre
     onApply(selectedLayerIdx, selectedEtapaField, selectedDate);
     setRefreshId(id => id + 1);
   }

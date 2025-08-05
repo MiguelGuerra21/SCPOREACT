@@ -207,88 +207,125 @@ const AppContainer = () => {
 
 
     async function handleBatchEditApply(layerIndex, fieldName, isoDateString) {
-        const entry = layers[layerIndex];
-        if (!entry) {
-            alert("Capa no encontrada");
-            return;
-        }
-        const { layer, selectedIds } = entry;
-        if (!selectedIds.length) {
-            alert("Nada seleccionado");
-            return;
-        }
+  const entry = layers[layerIndex];
+  if (!entry) {
+    alert("Capa no encontrada");
+    return;
+  }
+  const { layer, selectedIds, fechaCampos } = entry;
+  if (!selectedIds.length) {
+    alert("Nada seleccionado");
+    return;
+  }
 
-        // 1) Extract the etapa number from the fieldName:
-        const m = fieldName.match(/ET\s*0*?(\d+)$/i);
-        const selNum = m ? parseInt(m[1], 10) : null;
-        if (selNum == null) {
-            alert("Campo inválido");
-            return;
-        }
+  // 1) Extraer número de etapa
+  const m = fieldName.match(/ET\s*0*?(\d+)$/i);
+  const selNum = m ? parseInt(m[1], 10) : null;
+  if (selNum == null) {
+    alert("Campo inválido");
+    return;
+  }
 
-        // 2) Gather all “Fecha ETnn” fields ≤ selNum
-        const allFecha = layer.fields
-            .filter(f => {
-                const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
-                return t && parseInt(t[1], 10) <= selNum;
-            })
-            .map(f => ({
-                name: f.name,
-                num: parseInt(f.name.match(/\d+$/)[0], 10),
-                type: f.type
-            }));
+  // 2) Detectar todos los "Fecha ETnn" ≤ selNum junto a su "Etapa NN"
+  const allFecha = layer.fields
+    .filter(f => {
+      const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
+      return t && parseInt(t[1], 10) <= selNum;
+    })
+    .map(f => {
+      const num = parseInt(f.name.match(/\d+$/)[0], 10);
+      return {
+        name: f.name,
+        nameField: `Etapa ${String(num).padStart(2, "0")}`,
+        num,
+        type: f.type
+      };
+    });
 
-        // 3) Query those fields for all selected features
-        const q = layer.createQuery();
-        q.where = `${layer.objectIdField} IN (${selectedIds.join(",")})`;
-        q.outFields = [layer.objectIdField, ...allFecha.map(f => f.name)];
-        q.returnGeometry = false;
-        const res = await layer.queryFeatures(q);
+  console.log("[BatchEdit] selNum =", selNum, "allFecha =", allFecha);
 
-        // 4) Parse the ISO date string once
-        const chosenTime = Date.parse(isoDateString);
+  // 3) Query
+  const q = layer.createQuery();
+  q.where          = `${layer.objectIdField} IN (${selectedIds.join(",")})`;
+  q.outFields      = [layer.objectIdField, ...allFecha.map(f => f.nameField), ...allFecha.map(f => f.name)];
+  q.returnGeometry = false;
+  const res = await layer.queryFeatures(q);
 
-        // 5) Build updates: per feature
-        const updates = res.features.map(feat => {
-            const oidField = layer.objectIdField;
-            const attrs = { [oidField]: feat.attributes[oidField] };
-            allFecha.forEach(f => {
-                const cur = feat.attributes[f.name];
-                const isEmpty = cur == null || cur === "" || cur === 0;
-                // set if it's the selected etapa, OR an earlier empty one
-                if (f.num === selNum || (f.num < selNum && isEmpty)) {
-                    // if field type is "date", use epoch millis; otherwise string
-                    attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
-                }
-            });
-            return { attributes: attrs };
-        });
+  // 4) Parsear la fecha elegida
+  const chosenTime = Date.parse(isoDateString);
+  console.log("[BatchEdit] isoDateString =", isoDateString, "→", chosenTime);
 
-        if (!updates.length) {
-            alert("Nada que actualizar");
-            return;
-        }
+  // 5) Construir updates con logs
+ const updates = res.features.map(feat => {
+  const attrs = { OBJECTID: feat.attributes[layer.objectIdField] };
 
-        // 6) Apply edits
-        try {
-            const result = await layer.applyEdits({ updateFeatures: updates });
-            const fails = (result.updateFeaturesResults || []).filter(r => !r.success);
-            if (fails.length) alert("Algunas no se actualizaron");
+  allFecha.forEach(f => {
+    const curDate = feat.attributes[f.name];
+    const isEmptyDate = !curDate || curDate === "" || curDate === 0;
+    
+    const etapaNameValue = feat.attributes[f.nameField];
+    const isEmptyName = etapaNameValue === "" || 
+                        etapaNameValue === null || 
+                        etapaNameValue === undefined;
+    
+    console.log(`[BatchEdit] Processing ${f.name} (num: ${f.num}) → `, 
+                `Name: "${etapaNameValue}", `,
+                `isEmptyName: ${isEmptyName}, `,
+                `Date: ${curDate}, `,
+                `isEmptyDate: ${isEmptyDate}`);
 
-            const entry = layers[layerIndex];
-            await recalculateStatesInBatch(
-                entry.layer,
-                updates.map(u => u.attributes.fid),
-                entry.fechaCampos
-            );
-        } catch (err) {
-            console.error(err);
-            alert("Error al actualizar: " + err.message);
-        }
-
-        // 7) Close modal
-        setBatchEditOpen(false);
+    // Skip entirely if name is empty
+    if (isEmptyName) {
+      console.log(`  → Skipping etapa ${f.num} (empty name)`);
+      return; // Skip to next fecha field
     }
+
+    // Only process if name has value
+    if (f.num === selNum) {
+      // Always update target etapa if name exists
+      attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
+      console.log(`  → Updating TARGET etapa ${f.num} (${f.name})`);
+    } else if (f.num < selNum && isEmptyDate) {
+      // Only update previous etapas if date is empty
+      attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
+      console.log(`  → Updating PREVIOUS etapa ${f.num} (${f.name})`);
+    } else {
+      console.log(`  → Skipping etapa ${f.num} (not target or date not empty)`);
+    }
+  });
+
+  return { attributes: attrs };
+});
+
+  console.log("[BatchEdit] updates prepared:", updates);
+
+  if (!updates.length) {
+    alert("Nada que actualizar");
+    return;
+  }
+
+  // 6) Aplicar edits
+  try {
+    const result = await layer.applyEdits({ updateFeatures: updates });
+    const fails  = (result.updateFeaturesResults || []).filter(r => !r.success);
+    if (fails.length) alert("Algunas no se actualizaron");
+
+    // 7) Recalcular estados
+    const oids = updates.map(u => u.attributes.OBJECTID);
+    await recalculateStatesInBatch(layer, oids, fechaCampos);
+  }
+  catch (err) {
+    console.error(err);
+    alert("Error al actualizar: " + err.message);
+  }
+
+  // 8) Cerrar modal
+  setBatchEditOpen(false);
+}
+
+
+
+
 
     async function handleClearEtapa(layerIdx, dateField) {
         const entry = layers[layerIdx];
