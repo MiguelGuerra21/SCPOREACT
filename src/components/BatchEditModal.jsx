@@ -108,13 +108,14 @@ const handleClearAllEtapas = async () => {
     // todos los campos Fecha ETnn
     const dateFields = allEtapas.map(e => e.dateField);
     // preparar updates: asignar null a cada campo
-    const updates = selectedIds.map(id => ({
-      attributes: dateFields.reduce((acc, f) => {
-        acc.OBJECTID = id;
-        acc[f] = null;
-        return acc;
-      }, {})
-    }));
+    const updates = selectedIds.map(id => {
+      const attrs = { OBJECTID: id };
+      dateFields.forEach(f => {
+        attrs[f] = null;
+      });
+      attrs.Estado = 'Sin estado';
+      return { attributes: attrs };
+    });
     const result = await layer.applyEdits({ updateFeatures: updates });
     const fails = result.updateFeaturesResults?.filter(r => !r.success) || [];
     if (fails.length) window.alert("Algunas fechas no se pudieron borrar");
