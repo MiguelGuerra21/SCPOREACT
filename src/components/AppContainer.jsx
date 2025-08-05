@@ -14,6 +14,7 @@ import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 import ExportWorker from "../workers/exportShapefile.worker.js";
+import SCPOLogger from "../utils/SCPOLogger";
 
 const AppContainer = () => {
     // ----- Estados y refs -----
@@ -32,6 +33,7 @@ const AppContainer = () => {
     const [loadingMessage, setLoadingMessage] = useState("");
     const [stateColors, setStateColors] = useState({});
     const [hiddenStates, setHiddenStates] = useState({});
+    
 
     // Ref al MapView (instancia de ArcGIS MapView)
     const viewRef = useRef(null);
@@ -43,6 +45,10 @@ const AppContainer = () => {
 
     // Ref para el input de archivos
     const fileInputRef = useRef(null);
+
+    useEffect(() => {
+  SCPOLogger.init();
+}, []);
 
     // ----- Funciones de filtrado por estado -----
     const handleToggleStateVisibility = useCallback((layerId, estado, isHidden) => {
@@ -66,7 +72,7 @@ const AppContainer = () => {
         try {
             const currentDefinition = layerEntry.layer.definitionExpression || "";
             let newDefinition;
-            
+
             if (isHidden) {
                 if (currentDefinition.includes("Estado <>")) {
                     newDefinition = `${currentDefinition} AND Estado <> '${estado}'`;
@@ -81,7 +87,7 @@ const AppContainer = () => {
                     .replace(`Estado <> '${estado}'`, '')
                     .replace(/^\s*AND\s*/, '')
                     .replace(/\s*AND\s*$/, '');
-                
+
                 if (!newDefinition.trim()) newDefinition = null;
             }
 
@@ -207,121 +213,161 @@ const AppContainer = () => {
 
 
     async function handleBatchEditApply(layerIndex, fieldName, isoDateString) {
-  const entry = layers[layerIndex];
-  if (!entry) {
-    alert("Capa no encontrada");
-    return;
-  }
-  const { layer, selectedIds, fechaCampos } = entry;
-  if (!selectedIds.length) {
-    alert("Nada seleccionado");
-    return;
-  }
+        const entry = layers[layerIndex];
+        if (!entry) {
+            alert("Capa no encontrada");
+            return;
+        }
+        const { layer, selectedIds, fechaCampos } = entry;
+        if (!selectedIds.length) {
+            alert("Nada seleccionado");
+            return;
+        }
 
-  // 1) Extraer número de etapa
-  const m = fieldName.match(/ET\s*0*?(\d+)$/i);
-  const selNum = m ? parseInt(m[1], 10) : null;
-  if (selNum == null) {
-    alert("Campo inválido");
-    return;
-  }
+        // 1) Extraer número de etapa
+        const m = fieldName.match(/ET\s*0*?(\d+)$/i);
+        const selNum = m ? parseInt(m[1], 10) : null;
+        if (selNum == null) {
+            alert("Campo inválido");
+            return;
+        }
 
-  // 2) Detectar todos los "Fecha ETnn" ≤ selNum junto a su "Etapa NN"
-  const allFecha = layer.fields
-    .filter(f => {
-      const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
-      return t && parseInt(t[1], 10) <= selNum;
-    })
-    .map(f => {
-      const num = parseInt(f.name.match(/\d+$/)[0], 10);
-      return {
-        name: f.name,
-        nameField: `Etapa ${String(num).padStart(2, "0")}`,
-        num,
-        type: f.type
-      };
-    });
-
-  console.log("[BatchEdit] selNum =", selNum, "allFecha =", allFecha);
-
-  // 3) Query
-  const q = layer.createQuery();
-  q.where          = `${layer.objectIdField} IN (${selectedIds.join(",")})`;
-  q.outFields      = [layer.objectIdField, ...allFecha.map(f => f.nameField), ...allFecha.map(f => f.name)];
-  q.returnGeometry = false;
-  const res = await layer.queryFeatures(q);
-
-  // 4) Parsear la fecha elegida
-  const chosenTime = Date.parse(isoDateString);
-  console.log("[BatchEdit] isoDateString =", isoDateString, "→", chosenTime);
-
-  // 5) Construir updates con logs
- const updates = res.features.map(feat => {
-  const attrs = { OBJECTID: feat.attributes[layer.objectIdField] };
-
-  allFecha.forEach(f => {
-    const curDate = feat.attributes[f.name];
-    const isEmptyDate = !curDate || curDate === "" || curDate === 0;
-    
-    const etapaNameValue = feat.attributes[f.nameField];
-    const isEmptyName = etapaNameValue === "" || 
-                        etapaNameValue === null || 
-                        etapaNameValue === undefined;
-    
-    console.log(`[BatchEdit] Processing ${f.name} (num: ${f.num}) → `, 
-                `Name: "${etapaNameValue}", `,
-                `isEmptyName: ${isEmptyName}, `,
-                `Date: ${curDate}, `,
-                `isEmptyDate: ${isEmptyDate}`);
-
-    // Skip entirely if name is empty
-    if (isEmptyName) {
-      console.log(`  → Skipping etapa ${f.num} (empty name)`);
-      return; // Skip to next fecha field
-    }
-
-    // Only process if name has value
-    if (f.num === selNum) {
-      // Always update target etapa if name exists
-      attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
-      console.log(`  → Updating TARGET etapa ${f.num} (${f.name})`);
-    } else if (f.num < selNum && isEmptyDate) {
-      // Only update previous etapas if date is empty
-      attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
-      console.log(`  → Updating PREVIOUS etapa ${f.num} (${f.name})`);
-    } else {
-      console.log(`  → Skipping etapa ${f.num} (not target or date not empty)`);
-    }
+        // *** LOG: inicio batch edit ***
+  SCPOLogger.log({
+    timestamp: new Date().toISOString(),
+    user: "Usuario1",
+    action: "Batch edit apply",
+    info: `Layer "${entry.name}" (ID ${entry.id}): editing ${selectedIds.length} feature(s), ` +
+          `target stage "${fieldName}", date "${isoDateString}".`
   });
 
-  return { attributes: attrs };
-});
+        // 2) Detectar todos los "Fecha ETnn" ≤ selNum junto a su "Etapa NN"
+        const allFecha = layer.fields
+            .filter(f => {
+                const t = f.name.match(/^Fecha\s+ET\s*0*?(\d+)$/i);
+                return t && parseInt(t[1], 10) <= selNum;
+            })
+            .map(f => {
+                const num = parseInt(f.name.match(/\d+$/)[0], 10);
+                return {
+                    name: f.name,
+                    nameField: `Etapa ${String(num).padStart(2, "0")}`,
+                    num,
+                    type: f.type
+                };
+            });
 
-  console.log("[BatchEdit] updates prepared:", updates);
+        console.log("[BatchEdit] selNum =", selNum, "allFecha =", allFecha);
 
-  if (!updates.length) {
-    alert("Nada que actualizar");
-    return;
-  }
+        // 3) Query
+        const q = layer.createQuery();
+        q.where = `${layer.objectIdField} IN (${selectedIds.join(",")})`;
+        q.outFields = [layer.objectIdField, ...allFecha.map(f => f.nameField), ...allFecha.map(f => f.name)];
+        q.returnGeometry = false;
+        const res = await layer.queryFeatures(q);
 
-  // 6) Aplicar edits
-  try {
-    const result = await layer.applyEdits({ updateFeatures: updates });
-    const fails  = (result.updateFeaturesResults || []).filter(r => !r.success);
-    if (fails.length) alert("Algunas no se actualizaron");
+        // 4) Parsear la fecha elegida
+        const chosenTime = Date.parse(isoDateString);
+        console.log("[BatchEdit] isoDateString =", isoDateString, "→", chosenTime);
 
-    // 7) Recalcular estados
-    const oids = updates.map(u => u.attributes.OBJECTID);
-    await recalculateStatesInBatch(layer, oids, fechaCampos);
-  }
-  catch (err) {
-    console.error(err);
-    alert("Error al actualizar: " + err.message);
-  }
+        // 5) Construir updates con logs
+        const updates = res.features.map(feat => {
+            const attrs = { OBJECTID: feat.attributes[layer.objectIdField] };
 
-  // 8) Cerrar modal
-  setBatchEditOpen(false);
-}
+            allFecha.forEach(f => {
+                const curDate = feat.attributes[f.name];
+                const isEmptyDate = !curDate || curDate === "" || curDate === 0;
+
+                const etapaNameValue = feat.attributes[f.nameField];
+                const isEmptyName = etapaNameValue === "" ||
+                    etapaNameValue === null ||
+                    etapaNameValue === undefined;
+
+                console.log(`[BatchEdit] Processing ${f.name} (num: ${f.num}) → `,
+                    `Name: "${etapaNameValue}", `,
+                    `isEmptyName: ${isEmptyName}, `,
+                    `Date: ${curDate}, `,
+                    `isEmptyDate: ${isEmptyDate}`);
+
+                // Skip entirely if name is empty
+                if (isEmptyName) {
+                    console.log(`  → Skipping etapa ${f.num} (empty name)`);
+                    return; // Skip to next fecha field
+                }
+
+                // Only process if name has value
+                if (f.num === selNum) {
+                    // Always update target etapa if name exists
+                    attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
+                    console.log(`  → Updating TARGET etapa ${f.num} (${f.name})`);
+                } else if (f.num < selNum && isEmptyDate) {
+                    // Only update previous etapas if date is empty
+                    attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
+                    console.log(`  → Updating PREVIOUS etapa ${f.num} (${f.name})`);
+                } else {
+                    console.log(`  → Skipping etapa ${f.num} (not target or date not empty)`);
+                }
+            });
+
+            return { attributes: attrs };
+        });
+
+// *** LOG: antes de applyEdits, cuántos updates ***
+  SCPOLogger.log({
+    timestamp: new Date().toISOString(),
+    user: "Usuario1",
+    action: "Batch edit apply",
+    info: `Prepared ${updates.length} update(s) for layer "${entry.name}".`
+  });
+
+        console.log("[BatchEdit] updates prepared:", updates);
+
+        if (!updates.length) {
+            alert("Nada que actualizar");
+            return;
+        }
+
+        // 6) Aplicar edits
+        try {
+            const result = await layer.applyEdits({ updateFeatures: updates });
+            const fails = (result.updateFeaturesResults || []).filter(r => !r.success);
+            if (fails.length) alert("Algunas no se actualizaron");
+
+            // *** LOG: resultados de edición ***
+    SCPOLogger.log({
+      timestamp: new Date().toISOString(),
+      user: "Usuario1",
+      action: "Batch edit apply",
+      info: `applyEdits complete: ${result} succeeded, ${fails} failed.`
+    });
+
+            // 7) Recalcular estados
+            const oids = updates.map(u => u.attributes.OBJECTID);
+            await recalculateStatesInBatch(layer, oids, fechaCampos);
+
+            // *** LOG: estados recalculados ***
+    SCPOLogger.log({
+      timestamp: new Date().toISOString(),
+      user: "Usuario1",
+      action: "Batch edit apply",
+      info: `Recalculated Estado for ${oids.length} feature(s) on layer "${entry.name}".`
+    });
+        }
+        catch (err) {
+            // *** LOG: error ***
+    SCPOLogger.log({
+      timestamp: new Date().toISOString(),
+      user: "Usuario1",
+      action: "Batch edit apply error",
+      info: `Error applying batch edits: ${err.message}`
+    });
+            console.error(err);
+            alert("Error al actualizar: " + err.message);
+        }
+
+        // 8) Cerrar modal
+        setBatchEditOpen(false);
+    }
 
 
 
@@ -462,14 +508,20 @@ const AppContainer = () => {
     // ----- Manejador de apertura de archivo (shapefile ZIP) -----
     const handleFileOpen = async (file) => {
 
-
-
-
         const view = viewRef.current;
         if (!file || !view) return;
 
         const newId = layerIdRef.current++;
         const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
+
+        // --- LOG: start opening ---
+        SCPOLogger.log({
+            timestamp: new Date().toISOString(),
+            user: "Usuario1",
+            action: "Open shapefile",
+            info: `Started opening shapefile "${file.name}". Size: ${file.size} bytes.`
+        });
+        console.log("Logeada información de apertura");
 
         // Verificar duplicados usando un Set para mejor performance
         const layerNames = new Set(layersRef.current.map(layer => layer.name));
@@ -501,7 +553,16 @@ const AppContainer = () => {
 
             // Parsear con shpjs
             const geojson = await shpjs(arrayBuffer, { encoding });
-            console.log("GEOJSON reabierto:", geojson.features[0].properties);
+
+            // --- LOG: after parse ---
+            SCPOLogger.log({
+                timestamp: new Date().toISOString(),
+                user: "Usuario1",
+                action: "Open shapefile",
+                info: `Successfully parsed "${file.name}". ` +
+                    `Features: ${geojson.features.length}. ` +
+                    `Detected encoding: ${encoding}.`
+            });
 
             setLoadingMessage("Validando archivos");
             const hasPrj = Object.keys(zip.files).some(name =>
@@ -955,6 +1016,12 @@ return Text(Date(v), "DD/MM/YYYY");
             setLayers((prev) => [...prev, newEntry]);
 
         } catch (err) {
+            SCPOLogger.log({
+                timestamp: new Date().toISOString(),
+                user: "Usuario1",
+                action: "Open shapefile error",
+                info: `Error opening "${file.name}": ${err.message}`
+            });
             console.error("Error procesando shapefile:", file.name, err);
             window.alert("Error al procesar shapefile: " + err.message);
         } finally {

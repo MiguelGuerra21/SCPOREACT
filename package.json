@@ -2,6 +2,7 @@
   "name": "react-shapefile-arcgis",
   "version": "0.1.0",
   "private": true,
+  "proxy": "http://localhost:3001",
   "main": "public/electron.js",
   "homepage": "./",
   "dependencies": {
@@ -24,6 +25,7 @@
     "capacitor-file-picker": "^1.0.10",
     "cordova-plugin-file": "^8.1.3",
     "cordova-plugin-saf-mediastore": "^1.0.10",
+    "express": "^5.1.0",
     "file-saver": "^2.0.5",
     "geojson2shp": "^0.5.0",
     "jszip": "^3.10.1",
