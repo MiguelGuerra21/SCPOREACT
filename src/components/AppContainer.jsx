@@ -192,7 +192,7 @@ const AppContainer = () => {
                 const newState = detectarEstado(feature.attributes, fechaCampos);
                 return {
                     attributes: {
-                        OBJECTID: feature.attributes.OBJECTID,
+                        fid: feature.attributes.fid,
                         Estado: newState
                     }
                 };
@@ -250,7 +250,8 @@ const AppContainer = () => {
 
         // 5) Build updates: per feature
         const updates = res.features.map(feat => {
-            const attrs = { OBJECTID: feat.attributes[layer.objectIdField] };
+            const oidField = layer.objectIdField;
+            const attrs = { [oidField]: feat.attributes[oidField] };
             allFecha.forEach(f => {
                 const cur = feat.attributes[f.name];
                 const isEmpty = cur == null || cur === "" || cur === 0;
@@ -277,7 +278,7 @@ const AppContainer = () => {
             const entry = layers[layerIndex];
             await recalculateStatesInBatch(
                 entry.layer,
-                updates.map(u => u.attributes.OBJECTID),
+                updates.map(u => u.attributes.fid),
                 entry.fechaCampos
             );
         } catch (err) {
@@ -299,9 +300,10 @@ const AppContainer = () => {
         }
 
         // Build a single update that sets that dateField to null/""
+        const oidField = layer.objectIdField;
         const updates = selectedIds.map((oid) => ({
             attributes: {
-                OBJECTID: oid,
+                [oidField]: oid,
                 [dateField]: null
             }
         }));
@@ -329,7 +331,7 @@ const AppContainer = () => {
             const entry = layers[layerIndex];
             await recalculateStatesInBatch(
                 entry.layer,
-                updates.map(u => u.attributes.OBJECTID),
+                updates.map(u => u.attributes.fid),
                 entry.fechaCampos
             );
         } catch (error) {
@@ -685,7 +687,7 @@ const AppContainer = () => {
             // --- Crear FeatureLayer ---
             const featureLayer = new FeatureLayer({
                 source: [],
-                objectIdField: "OBJECTID",
+                objectIdField: "fid",
                 geometryType,
                 spatialReference: { wkid: 4326 },
                 fields: [...dynamicFields],
@@ -745,9 +747,6 @@ return Text(Date(v), "DD/MM/YYYY");
                 }
             });
 
-
-
-
             // --- Configurar eventos para esta capa específica ---
             const handleLayerUpdates = () => {
                 setLayers(prev => prev.map(layer => {
@@ -796,10 +795,10 @@ return Text(Date(v), "DD/MM/YYYY");
                     const { features } = await featureLayer.queryFeatures(query);
 
                     const updateFeatures = features.map(feature => {
-                        const update = updates.find(u => u.featureId === feature.attributes.OBJECTID);
+                        const update = updates.find(u => u.featureId === feature.attributes.fid);
                         return {
                             attributes: {
-                                OBJECTID: feature.attributes.OBJECTID,
+                                fid: feature.attributes.fid,
                                 Estado: update.newState
                             },
                             geometry: feature.geometry
@@ -837,7 +836,7 @@ return Text(Date(v), "DD/MM/YYYY");
             setProgressTotal(total);
 
             let objectIdCounter = 0;
-
+            const oidField = featureLayer.objectIdField;
             for (let i = 0; i < total; i += batchSize) {
                 const batch = allFeatures.slice(i, i + batchSize)
                     .map((f) => {
@@ -860,7 +859,7 @@ return Text(Date(v), "DD/MM/YYYY");
 
                         return {
                             geometry,
-                            attributes: { OBJECTID: objectIdCounter++, ...propsClean },
+                            attributes: { [oidField]: objectIdCounter++, ...propsClean },
                         };
                     })
                     .filter(Boolean);

@@ -315,7 +315,7 @@ const MapViewWrapper = ({
                 const q = layerView.createQuery();
                 q.geometry = queryExt;
                 const result = await layerView.queryFeatures(q);
-                const ids = result.features.map(f => f.attributes.OBJECTID);
+                const ids = result.features.map(f => f.attributes.fid);
                 entry.selectedIds = ids;
                 highlightHandle?.remove(); 
                 entry.highlightHandle = ids.length
@@ -357,7 +357,7 @@ const MapViewWrapper = ({
           const entry = layersRef.current.find(e => e.layer === graphic.layer);
           if (!entry) return;
 
-          const oid = graphic.getAttribute("OBJECTID");
+          const oid = graphic.getAttribute("fid");
           if (oid == null) return;
 
           const prevIds = entry.selectedIds || [];

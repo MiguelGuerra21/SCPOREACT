@@ -105,11 +105,13 @@ const handleClearAllEtapas = async () => {
   try {
     const lw = layersWithSel.find((l) => l.idx === selectedLayerIdx);
     const { layer, selectedIds } = lw.entry;
+    const oidField = layer.objectIdField; 
     // todos los campos Fecha ETnn
     const dateFields = allEtapas.map(e => e.dateField);
+
     // preparar updates: asignar null a cada campo
     const updates = selectedIds.map(id => {
-      const attrs = { OBJECTID: id };
+      const attrs = { [oidField]: id };
       dateFields.forEach(f => {
         attrs[f] = null;
       });
@@ -168,7 +170,8 @@ const handleClearAllEtapas = async () => {
     //    • cualquier toUpdate previo sin valor → dateMS
     //    • dejar intactas aquellas previas con valor
     const updates = features.map(feat => {
-      const attrs = { OBJECTID: feat.attributes[layer.objectIdField] };
+      const oidField = layer.objectIdField;
+      const attrs = { [oidField]: feat.attributes[oidField] };
       toUpdate.forEach(e => {
         const curVal = feat.attributes[e.dateField];
         const isEmpty = curVal == null || curVal === "" || curVal === 0;
