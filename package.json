@@ -40,7 +40,9 @@
     "worker-plugin": "^5.0.0"
   },
   "scripts": {
-    "start": "craco start",
+    "start": "concurrently --names \"LOGGER,CLIENT\" -c \"cyan,green\" \"npm run server\" \"npm run client\"",
+    "client": "craco start",
+    "server": "node server/logger.js",
     "build": "npm run copy:core && craco build",
     "test": "craco test",
     "eject": "craco eject",
@@ -74,6 +76,7 @@
     "@capacitor/core": "^7.4.1",
     "@craco/craco": "^7.1.0",
     "buffer": "^6.0.3",
+    "concurrently": "^9.2.0",
     "cpx": "^1.5.0",
     "electron": "^37.1.0",
     "electron-builder": "^26.0.12",

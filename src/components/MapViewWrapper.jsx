@@ -97,7 +97,10 @@ const MapViewWrapper = ({
             { level: 17, resolution: 1.19432856696, scale: 4513.988705 },
             { level: 18, resolution: 0.597164283478, scale: 2256.994353 },
             { level: 19, resolution: 0.298582141739, scale: 1128.497176 },
-            { level: 20, resolution: 0.149291070869, scale: 564.248588 }
+            { level: 20, resolution: 0.149291070869, scale: 564.248588 },
+            {level: 21, resolution: 0.0746455354345, scale: 282.124294 },
+            {level: 22, resolution: 0.0373227677173, scale: 141.062147 },
+            { level: 23, resolution: 0.0186613838586, scale: 70.5310735 },
           ]
         }
       });
@@ -187,7 +190,10 @@ const MapViewWrapper = ({
           { level: 17, resolution: 1.19432856696, scale: 4513.988705 },
           { level: 18, resolution: 0.597164283478, scale: 2256.994353 },
           { level: 19, resolution: 0.298582141739, scale: 1128.497176 },
-          { level: 20, resolution: 0.149291070869, scale: 564.248588 }
+          { level: 20, resolution: 0.149291070869, scale: 564.248588 },
+          {level: 21, resolution: 0.0746455354345, scale: 282.124294 },
+          {level: 22, resolution: 0.0373227677173, scale: 141.062147 },
+          { level: 23, resolution: 0.0186613838586, scale: 70.5310735 },
         ]
       }
     });
@@ -203,7 +209,7 @@ const MapViewWrapper = ({
       zoom: 0,
       constraints: {
         minZoom: 2,
-        maxZoom: 20,
+        maxZoom: 23,
         snapToZoom: true
       }
     });
