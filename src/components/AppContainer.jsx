@@ -404,7 +404,7 @@ const AppContainer = () => {
         setBatchEditOpen(false);
         setTimeout(() => setBatchEditOpen(true), 0);
     }
-    
+
     // Sincronizar layersRef.current siempre que cambie layers
     useEffect(() => {
         layersRef.current = layers;
@@ -1106,7 +1106,11 @@ return Text(Date(v), "DD/MM/YYYY");
         }));
         newZ.file(`${base}.cpg`, "CP1252");
 
-        const final = await newZ.generateAsync({ type: "blob" });
+        const final = await newZ.generateAsync({
+            type: "blob",
+            compression: "DEFLATE",
+            compressionOptions: { level: 9 }
+        });
 
         // ─────────────── LOGGING  ───────────────
         SCPOLogger.log({
