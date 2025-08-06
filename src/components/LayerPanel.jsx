@@ -40,7 +40,7 @@ const LayerPanel = ({
   // Función para alternar visibilidad de un estado
   const handleToggleState = useCallback((layerId, estado) => {
     const isHidden = !hiddenStates[layerId]?.[estado];
-    
+
     // Actualizar estado local
     setHiddenStates(prev => {
       const newState = { ...prev };
@@ -113,7 +113,7 @@ const LayerPanel = ({
     };
 
     updateLayerStats();
-   
+
     return () => abortController.abort();
   }, [layers]);
 
@@ -130,28 +130,28 @@ const LayerPanel = ({
   // Estilos del componente
   const containerStyle = embedded
     ? {
-        position: "relative",
-        width: "100%",
-        backgroundColor: "#fff",
-        borderRadius: 8,
-        boxShadow: "none",
-        overflow: "visible",
-        marginTop: 8,
-        transition: "none",
-        zIndex: "auto",
-      }
+      position: "relative",
+      width: "100%",
+      backgroundColor: "#fff",
+      borderRadius: 8,
+      boxShadow: "none",
+      overflow: "visible",
+      marginTop: 8,
+      transition: "none",
+      zIndex: "auto",
+    }
     : {
-        position: "absolute",
-        bottom: isAndroid ? 70 : 60,
-        left: 16,
-        width: isOpen ? 260 : 40,
-        backgroundColor: "#fff",
-        borderRadius: 8,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-        overflow: "hidden",
-        transition: "width 0.3s",
-        zIndex: 1000,
-      };
+      position: "absolute",
+      bottom: isAndroid ? 70 : 60,
+      left: 16,
+      width: isOpen ? 260 : 40,
+      backgroundColor: "#fff",
+      borderRadius: 8,
+      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+      overflow: "hidden",
+      transition: "width 0.3s",
+      zIndex: 1000,
+    };
 
   const headerStyle = {
     display: "flex",
@@ -256,10 +256,10 @@ const LayerPanel = ({
         {/* CONTENEDOR CON SCROLL */}
         <div
           style={{
-            maxHeight: "300px",      
-            overflowY: "auto",        
-            paddingRight: "6px",    
-            marginBottom: "8px",      
+            maxHeight: "300px",
+            overflowY: "auto",
+            paddingRight: "6px",
+            marginBottom: "8px",
           }}
         >
           {layers.map((entry) => {

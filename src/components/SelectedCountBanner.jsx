@@ -1,5 +1,4 @@
-// src/components/SelectedCountBanner.jsx
-import React, { useState } from "react";
+import { useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { FaChevronRight, FaChevronLeft } from "react-icons/fa";
 
@@ -77,8 +76,6 @@ const SelectedCountBanner = ({
     transition: "background 0.2s",
   };
 
-  const iconStyle = { fontSize: 24, color: "#fff", lineHeight: 1 };
-
   return (
     <div style={containerStyle}>
       <div style={headerStyle}>
@@ -102,7 +99,7 @@ const SelectedCountBanner = ({
             onMouseEnter={e => e.currentTarget.style.background = "linear-gradient(180deg, #238636 0%, #1b7b4a 100%)"}
             onMouseLeave={e => e.currentTarget.style.background = "linear-gradient(180deg, #28a745 0%, #1fa85a 100%)"}
           >
-            <span style={{ fontSize: 24, color: "#fff" }}>✎</span>          
+            <span style={{ fontSize: 24, color: "#fff" }}>✎</span>
           </button>
         )}
         {/* Deseleccionar todo */}

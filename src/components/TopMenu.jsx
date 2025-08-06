@@ -3,7 +3,7 @@ import React, { useRef, useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { FaBars } from "react-icons/fa";
 import LayerPanel from "./LayerPanel";
- 
+
 export default function TopMenu({
   menuOpen,
   toggleMenu,
@@ -20,10 +20,9 @@ export default function TopMenu({
 }) {
   const isAndroid = Capacitor.getPlatform() === "android";
   const containerRef = useRef(null);
- 
-  // new state to show/hide the controls modal
+
   const [showControls, setShowControls] = useState(false);
- 
+
   // click‐outside to close main menu
   useEffect(() => {
     if (!menuOpen) return;
@@ -35,7 +34,7 @@ export default function TopMenu({
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [menuOpen, toggleMenu]);
- 
+
   const iconButton = {
     position: "absolute",
     top: isAndroid ? 35 : 8,
@@ -51,7 +50,7 @@ export default function TopMenu({
     zIndex: 2000,
     cursor: "pointer"
   };
- 
+
   const panelStyle = {
     position: "absolute",
     top: (isAndroid ? 35 : 8) + 40 + 8,
@@ -65,14 +64,14 @@ export default function TopMenu({
     overflow: "hidden",
     display: menuOpen ? "block" : "none"
   };
- 
+
   const itemStyle = {
     padding: "12px 16px",
     cursor: "pointer",
     borderBottom: "1px solid #eee",
     transition: "background 0.2s"
   };
- 
+
   const menuItems = [
     { label: "Abrir nuevo…", action: onOpenFiles },
     { label: "Exportar Shapefile…", action: onExportSHP },
@@ -80,14 +79,14 @@ export default function TopMenu({
     { label: "Limpiar mapa", action: onClearMap },
     ...(!isAndroid ? [{ label: "Cerrar aplicación", action: onCloseApp }] : [])
   ];
- 
+
   return (
     <div ref={containerRef}>
       {/* toggle button */}
       <div style={iconButton} onClick={() => toggleMenu(!menuOpen)}>
         <FaBars size={20} color="#333" />
       </div>
- 
+
       {/* dropdown panel */}
       <div style={panelStyle}>
         {menuItems.map(({ label, action }) => (
@@ -101,9 +100,9 @@ export default function TopMenu({
             {label}
           </div>
         ))}
- 
+
         <div style={{ height: 1, backgroundColor: "#ddd", margin: "4px 0" }} />
- 
+
         <div style={{ padding: "8px" }}>
           <LayerPanel
             layers={layers}
@@ -116,13 +115,15 @@ export default function TopMenu({
           />
         </div>
       </div>
- 
+
       {/* Controls Legend Modal */}
       {showControls && (
         <div style={modalBackdrop}>
           <div style={modalBox}>
-            <h3 style={{ marginTop: 0 }}>Leyenda de controles</h3>
+            <h3 style={{ marginTop: 0 }}>Guía de uso de la aplicación</h3>
             <ul style={{ paddingLeft: 20 }}>
+              <li><strong>Cargar un shapefile:</strong> Para cargar un shapefile todos sus archivos deben estár agrupados en un zip</li>
+              <li><strong>Modo Online/Offline:</strong> El modo online permite el uso de mapa en directo, en offline solo se nos permite la navegación en un canvas blanco</li>
               <li><strong>Desplazar:</strong> Arrastrar el mapa con el ratón</li>
               <li><strong>Zoom:</strong> Rueda del ratón o controles de zoom</li>
               <li><strong>Selección individual:</strong> Ctrl + click sobre un objeto</li>
@@ -137,7 +138,7 @@ export default function TopMenu({
     </div>
   );
 }
- 
+
 // styles for the modal
 const modalBackdrop = {
   position: "fixed",
@@ -148,7 +149,7 @@ const modalBackdrop = {
   alignItems: "center",
   zIndex: 3000
 };
- 
+
 const modalBox = {
   backgroundColor: "#fff",
   borderRadius: 8,
@@ -156,7 +157,7 @@ const modalBox = {
   width: 300,
   boxShadow: "0 4px 16px rgba(0,0,0,0.2)"
 };
- 
+
 const closeModalBtn = {
   marginTop: 16,
   padding: "8px 16px",

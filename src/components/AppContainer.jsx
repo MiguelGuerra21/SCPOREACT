@@ -33,9 +33,9 @@ const AppContainer = () => {
     const [loadingMessage, setLoadingMessage] = useState("");
     const [stateColors, setStateColors] = useState({});
     const [hiddenStates, setHiddenStates] = useState({});
-    
 
-    // Ref al MapView (instancia de ArcGIS MapView)
+
+    // Ref al MapView
     const viewRef = useRef(null);
 
     // Refs para almacenar el estado inicial de la vista (center, zoom, extent)
@@ -47,8 +47,8 @@ const AppContainer = () => {
     const fileInputRef = useRef(null);
 
     useEffect(() => {
-  SCPOLogger.init();
-}, []);
+        SCPOLogger.init();
+    }, []);
 
     // ----- Funciones de filtrado por estado -----
     const handleToggleStateVisibility = useCallback((layerId, estado, isHidden) => {
@@ -97,7 +97,6 @@ const AppContainer = () => {
         }
     }, []);
 
-    // Update detectarEstado to be more robust
     function detectarEstado(props, fechaCampos) {
         // 1. Handle undefined inputs
         if (!fechaCampos || !Array.isArray(fechaCampos)) {
@@ -183,7 +182,6 @@ const AppContainer = () => {
         return false;
     }
 
-    // Add a new function to recalculate states in batch
     const recalculateStatesInBatch = async (layer, featureIds, fechaCampos) => {
         try {
             // Query all features that need updating
@@ -211,7 +209,6 @@ const AppContainer = () => {
         }
     };
 
-
     async function handleBatchEditApply(layerIndex, fieldName, isoDateString) {
         const entry = layers[layerIndex];
         if (!entry) {
@@ -233,13 +230,13 @@ const AppContainer = () => {
         }
 
         // *** LOG: inicio batch edit ***
-  SCPOLogger.log({
-    timestamp: new Date().toISOString(),
-    user: "Usuario1",
-    action: "Batch edit apply",
-    info: `Layer "${entry.name}" (ID ${entry.id}): editing ${selectedIds.length} feature(s), ` +
-          `target stage "${fieldName}", date "${isoDateString}".`
-  });
+        SCPOLogger.log({
+            timestamp: new Date().toISOString(),
+            user: "Usuario1",
+            action: "Batch edit apply",
+            info: `Layer "${entry.name}" (ID ${entry.id}): editing ${selectedIds.length} feature(s), ` +
+                `target stage "${fieldName}", date "${isoDateString}".`
+        });
 
         // 2) Detectar todos los "Fecha ETnn" ≤ selNum junto a su "Etapa NN"
         const allFecha = layer.fields
@@ -257,7 +254,6 @@ const AppContainer = () => {
                 };
             });
 
-        console.log("[BatchEdit] selNum =", selNum, "allFecha =", allFecha);
 
         // 3) Query
         const q = layer.createQuery();
@@ -268,7 +264,6 @@ const AppContainer = () => {
 
         // 4) Parsear la fecha elegida
         const chosenTime = Date.parse(isoDateString);
-        console.log("[BatchEdit] isoDateString =", isoDateString, "→", chosenTime);
 
         // 5) Construir updates con logs
         const updates = res.features.map(feat => {
@@ -283,15 +278,8 @@ const AppContainer = () => {
                     etapaNameValue === null ||
                     etapaNameValue === undefined;
 
-                console.log(`[BatchEdit] Processing ${f.name} (num: ${f.num}) → `,
-                    `Name: "${etapaNameValue}", `,
-                    `isEmptyName: ${isEmptyName}, `,
-                    `Date: ${curDate}, `,
-                    `isEmptyDate: ${isEmptyDate}`);
-
                 // Skip entirely if name is empty
                 if (isEmptyName) {
-                    console.log(`  → Skipping etapa ${f.num} (empty name)`);
                     return; // Skip to next fecha field
                 }
 
@@ -299,28 +287,23 @@ const AppContainer = () => {
                 if (f.num === selNum) {
                     // Always update target etapa if name exists
                     attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
-                    console.log(`  → Updating TARGET etapa ${f.num} (${f.name})`);
                 } else if (f.num < selNum && isEmptyDate) {
                     // Only update previous etapas if date is empty
                     attrs[f.name] = f.type === "date" ? chosenTime : isoDateString;
-                    console.log(`  → Updating PREVIOUS etapa ${f.num} (${f.name})`);
                 } else {
-                    console.log(`  → Skipping etapa ${f.num} (not target or date not empty)`);
                 }
             });
 
             return { attributes: attrs };
         });
 
-// *** LOG: antes de applyEdits, cuántos updates ***
-  SCPOLogger.log({
-    timestamp: new Date().toISOString(),
-    user: "Usuario1",
-    action: "Batch edit apply",
-    info: `Prepared ${updates.length} update(s) for layer "${entry.name}".`
-  });
-
-        console.log("[BatchEdit] updates prepared:", updates);
+        // *** LOG: antes de applyEdits, cuántos updates ***
+        SCPOLogger.log({
+            timestamp: new Date().toISOString(),
+            user: "Usuario1",
+            action: "Batch edit apply",
+            info: `Prepared ${updates.length} update(s) for layer "${entry.name}".`
+        });
 
         if (!updates.length) {
             alert("Nada que actualizar");
@@ -334,33 +317,33 @@ const AppContainer = () => {
             if (fails.length) alert("Algunas no se actualizaron");
 
             // *** LOG: resultados de edición ***
-    SCPOLogger.log({
-      timestamp: new Date().toISOString(),
-      user: "Usuario1",
-      action: "Batch edit apply",
-      info: `applyEdits complete: ${result} succeeded, ${fails} failed.`
-    });
+            SCPOLogger.log({
+                timestamp: new Date().toISOString(),
+                user: "Usuario1",
+                action: "Batch edit apply",
+                info: `applyEdits complete: ${result} succeeded, ${fails} failed.`
+            });
 
             // 7) Recalcular estados
             const oids = updates.map(u => u.attributes.OBJECTID);
             await recalculateStatesInBatch(layer, oids, fechaCampos);
 
             // *** LOG: estados recalculados ***
-    SCPOLogger.log({
-      timestamp: new Date().toISOString(),
-      user: "Usuario1",
-      action: "Batch edit apply",
-      info: `Recalculated Estado for ${oids.length} feature(s) on layer "${entry.name}".`
-    });
+            SCPOLogger.log({
+                timestamp: new Date().toISOString(),
+                user: "Usuario1",
+                action: "Batch edit apply",
+                info: `Recalculated Estado for ${oids.length} feature(s) on layer "${entry.name}".`
+            });
         }
         catch (err) {
             // *** LOG: error ***
-    SCPOLogger.log({
-      timestamp: new Date().toISOString(),
-      user: "Usuario1",
-      action: "Batch edit apply error",
-      info: `Error applying batch edits: ${err.message}`
-    });
+            SCPOLogger.log({
+                timestamp: new Date().toISOString(),
+                user: "Usuario1",
+                action: "Batch edit apply error",
+                info: `Error applying batch edits: ${err.message}`
+            });
             console.error(err);
             alert("Error al actualizar: " + err.message);
         }
@@ -368,10 +351,6 @@ const AppContainer = () => {
         // 8) Cerrar modal
         setBatchEditOpen(false);
     }
-
-
-
-
 
     async function handleClearEtapa(layerIdx, dateField) {
         const entry = layers[layerIdx];
@@ -432,10 +411,8 @@ const AppContainer = () => {
         layersRef.current = layers;
     }, [layers]);
 
-    // ----- Funciones auxiliares -----
 
-    // Convierte geometría GeoJSON a geometría ArcGIS (point/polyline/polygon),
-    // incluyendo MultiLineString y MultiPolygon
+    // Convierte geometría GeoJSON a geometría ArcGIS (point/polyline/polygon)
     const convertGeometry = (geo) => {
         if (!geo) return null;
 
@@ -511,6 +488,27 @@ const AppContainer = () => {
         const view = viewRef.current;
         if (!file || !view) return;
 
+        //Control del tamaño del archivo
+        const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+
+        if (file.size > MAX_BYTES) {
+            const mb = (file.size / (1024 * 1024)).toFixed(1);
+            window.alert(
+                `El archivo pesa ${mb} MB, que supera el límite de 10 MB.\n` +
+                `Por favor reduce su tamaño antes de cargarlo.`
+            );
+
+            // --- LOG: archivo rechazado por tamaño ---
+            SCPOLogger.log({
+                timestamp: new Date().toISOString(),
+                user: "Usuario1",
+                action: "Open shapefile rejected",
+                info: `Attempted to load "${file.name}" of ${mb} MB (>10 MB limit)`
+            });
+
+            return;
+        }
+
         const newId = layerIdRef.current++;
         const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
 
@@ -521,7 +519,6 @@ const AppContainer = () => {
             action: "Open shapefile",
             info: `Started opening shapefile "${file.name}". Size: ${file.size} bytes.`
         });
-        console.log("Logeada información de apertura");
 
         // Verificar duplicados usando un Set para mejor performance
         const layerNames = new Set(layersRef.current.map(layer => layer.name));
@@ -547,7 +544,6 @@ const AppContainer = () => {
             const cpgEntry = Object.keys(zip.files).find(n => n.toLowerCase().endsWith(".cpg"));
             if (cpgEntry) {
                 const txt = (await zip.file(cpgEntry).async("string")).trim();
-                console.log(".cpg original:", cpgEntry, "→", txt);
                 encoding = txt || encoding;
             }
 
@@ -1114,36 +1110,22 @@ return Text(Date(v), "DD/MM/YYYY");
         newZ.file(`${base}.cpg`, "CP1252");
 
         const final = await newZ.generateAsync({ type: "blob" });
+
+        // ─────────────── LOGGING  ───────────────
+        SCPOLogger.log({
+            timestamp: new Date().toISOString(),
+            user: "Usuario1",
+            action: "Export shapefile",
+            info: `Exported layer "${name}" as ${base}.zip; ` +
+                `features: ${features.length}; ` +
+                `output size: ${final.size} bytes.`
+        });
+        // ─────────────────────────────────────────
+
         saveAs(final, `${base}.zip`);
     }
 
 
-
-
-
-
-
-
-
-
-    // Función auxiliar para Blob a Base64
-    function blobToBase64(blob, onProgress) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result.split(",")[1]);
-            reader.onerror = reject;
-            reader.onprogress = (evt) => {
-                if (evt.lengthComputable && typeof onProgress === "function") {
-                    const percent = (evt.loaded / evt.total) * 100;
-                    onProgress(percent, evt.loaded, evt.total);
-                }
-            };
-            reader.readAsDataURL(blob);
-        });
-    }
-
-
-    // ----- Toggle visibilidad capa -----
     const toggleLayerVisibility = (id) => {
         setLayers((prev) =>
             prev.map((entry) => {
@@ -1167,8 +1149,6 @@ return Text(Date(v), "DD/MM/YYYY");
         });
         setSelectedCount(total);
     };
-
-    // ----- Limpiar mapa: eliminar capas y restablecer vista inicial -----
     const handleClearMap = () => {
         const confirmed = window.confirm(
             "¿Estás seguro de que quieres limpiar todas las capas del mapa?"
@@ -1201,8 +1181,6 @@ return Text(Date(v), "DD/MM/YYYY");
         setSelectedCount(0);
         setMenuOpen(false);
     };
-
-    // ----- Cerrar app -----
     const handleCloseApp = () => {
         const confirmed = window.confirm(
             "¿Estás seguro de que quieres cerrar la aplicación?\nLos cambios no guardados se perderán"
@@ -1210,14 +1188,11 @@ return Text(Date(v), "DD/MM/YYYY");
         if (confirmed) window.close();
         setMenuOpen(false);
     };
-
     const handleOpenFiles = () => {
         // Dispara el input oculto
         if (fileInputRef.current) fileInputRef.current.click();
         setMenuOpen(false);
     };
-
-    // ----- Centrar vista a la extensión combinada -----
     const handleCenterView = async () => {
         const view = viewRef.current;
         if (!view) return;
@@ -1240,10 +1215,7 @@ return Text(Date(v), "DD/MM/YYYY");
             );
         }
     };
-
-    // ----- Exportar como Shapefile: abrir modal -----
     const [exportModalOpen, setExportModalOpen] = useState(false);
-
     const handleExportRequest = () => {
         if (layers.length === 0) {
             window.alert("No hay capas cargadas para guardar.");
@@ -1269,6 +1241,7 @@ return Text(Date(v), "DD/MM/YYYY");
     const handleExportCancel = () => {
         setExportModalOpen(false);
     };
+
     // ----- JSX de render -----
     return (
         <div>

@@ -1,5 +1,4 @@
-// src/components/ExportModal.jsx
-import React, { useState } from "react";
+import { useState } from "react";
 
 const ExportModal = ({ layers, onCancel, onConfirm }) => {
   const [idx, setIdx] = useState(0);

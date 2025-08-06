@@ -1,4 +1,3 @@
-// src/components/FileLoader.jsx
 import React from "react";
 
 const FileLoader = React.forwardRef(({ accept, multiple, onFilesSelected }, ref) => {

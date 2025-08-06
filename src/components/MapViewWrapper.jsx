@@ -153,7 +153,6 @@ const MapViewWrapper = ({
     const host = window.location.origin;            
     const publicUrl = process.env.PUBLIC_URL || ""; 
     const urlTemplate = `${host}${publicUrl}/tiles/blank.png`;
-    console.log("Cargando tiles desde:", urlTemplate);
 
     const tileLayer = new WebTileLayer({
       urlTemplate: urlTemplate,
