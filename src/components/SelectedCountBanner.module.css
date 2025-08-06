@@ -1,0 +1,71 @@
+/* SelectedCountBanner.module.css */
+/* =============================================================== */
+/* =================== Estilos modal de selección ================ */
+/* =============================================================== */
+
+.containerStyle {
+    position: absolute;
+    right: 16px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    overflow: hidden;
+    transition: width 0.3s;
+    z-index: 1000;
+}
+
+.headerStyle {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    background: linear-gradient(90deg, #4facfe, #00f2fe);
+    color: #fff;
+}
+
+.toggleBtnStyle {
+    background-color: transparent;
+    border: none;
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+}
+
+.contentStyle {
+    justify-content: space-around;
+    align-items: center;
+    padding: 12px;
+    gap: 8;
+}
+
+.editButtonStyle {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #28a745 0%, #1fa85a 100%);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.iconStyle {
+    font-size: 24px;
+    color: #fff; 
+}
+
+.deselectButtonStyle {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #fd7e14;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+/* =============================================================== */

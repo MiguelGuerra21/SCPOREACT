@@ -3,7 +3,8 @@ import React, { useRef, useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { FaBars } from "react-icons/fa";
 import LayerPanel from "./LayerPanel";
-
+import styles from './TopMenu.module.css';
+ 
 export default function TopMenu({
   menuOpen,
   toggleMenu,
@@ -34,44 +35,7 @@ export default function TopMenu({
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
   }, [menuOpen, toggleMenu]);
-
-  const iconButton = {
-    position: "absolute",
-    top: isAndroid ? 35 : 8,
-    left: 16,
-    width: 40,
-    height: 40,
-    backgroundColor: "#fff",
-    borderRadius: 8,
-    boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 2000,
-    cursor: "pointer"
-  };
-
-  const panelStyle = {
-    position: "absolute",
-    top: (isAndroid ? 35 : 8) + 40 + 8,
-    left: 16,
-    width: 280,
-    backgroundColor: "#fff",
-    borderRadius: 8,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-    zIndex: 1999,
-    maxHeight: "80vh",
-    overflow: "hidden",
-    display: menuOpen ? "block" : "none"
-  };
-
-  const itemStyle = {
-    padding: "12px 16px",
-    cursor: "pointer",
-    borderBottom: "1px solid #eee",
-    transition: "background 0.2s"
-  };
-
+   
   const menuItems = [
     { label: "Abrir nuevo…", action: onOpenFiles },
     { label: "Exportar Shapefile…", action: onExportSHP },
@@ -83,16 +47,16 @@ export default function TopMenu({
   return (
     <div ref={containerRef}>
       {/* toggle button */}
-      <div style={iconButton} onClick={() => toggleMenu(!menuOpen)}>
+      <div className ={styles.iconButton} style={{ top: isAndroid ? 35 : 8 }} onClick={() => toggleMenu(!menuOpen)}>
         <FaBars size={20} color="#333" />
       </div>
 
       {/* dropdown panel */}
-      <div style={panelStyle}>
+      <div className={styles.panelStyle} style={{top: (isAndroid ? 35 : 8) + 40 + 8, display: menuOpen ? "block" : "none"}}>
         {menuItems.map(({ label, action }) => (
           <div
             key={label}
-            style={itemStyle}
+            className={styles.itemStyle}
             onClick={() => { action(); toggleMenu(false); }}
             onMouseEnter={e => e.currentTarget.style.background = "#f5f5f5"}
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}
@@ -100,10 +64,8 @@ export default function TopMenu({
             {label}
           </div>
         ))}
-
-        <div style={{ height: 1, backgroundColor: "#ddd", margin: "4px 0" }} />
-
-        <div style={{ padding: "8px" }}>
+ 
+        <div className={styles.layerPanelStyle}>
           <LayerPanel
             layers={layers}
             onToggleVisibility={onToggleVisibility}
@@ -118,10 +80,10 @@ export default function TopMenu({
 
       {/* Controls Legend Modal */}
       {showControls && (
-        <div style={modalBackdrop}>
-          <div style={modalBox}>
-            <h3 style={{ marginTop: 0 }}>Guía de uso de la aplicación</h3>
-            <ul style={{ paddingLeft: 20 }}>
+        <div className={styles.modalBackdrop}>
+          <div className={styles.modalBox}>
+            <h3 className={styles.modalTitle}>Leyenda de controles</h3>
+            <ul className={styles.modalList}>
               <li><strong>Cargar un shapefile:</strong> Para cargar un shapefile todos sus archivos deben estár agrupados en un zip</li>
               <li><strong>Modo Online/Offline:</strong> El modo online permite el uso de mapa en directo, en offline solo se nos permite la navegación en un canvas blanco</li>
               <li><strong>Desplazar:</strong> Arrastrar el mapa con el ratón</li>
@@ -129,7 +91,7 @@ export default function TopMenu({
               <li><strong>Selección individual:</strong> Ctrl + click sobre un objeto</li>
               <li><strong>Multiselección:</strong> Shift + arrastrar caja sobre objetos</li>
             </ul>
-            <button style={closeModalBtn} onClick={() => setShowControls(false)}>
+            <button className={styles.closeModalBtn} onClick={() => setShowControls(false)}>
               Cerrar
             </button>
           </div>
@@ -138,32 +100,4 @@ export default function TopMenu({
     </div>
   );
 }
-
-// styles for the modal
-const modalBackdrop = {
-  position: "fixed",
-  inset: 0,
-  backgroundColor: "rgba(0,0,0,0.5)",
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-  zIndex: 3000
-};
-
-const modalBox = {
-  backgroundColor: "#fff",
-  borderRadius: 8,
-  padding: 20,
-  width: 300,
-  boxShadow: "0 4px 16px rgba(0,0,0,0.2)"
-};
-
-const closeModalBtn = {
-  marginTop: 16,
-  padding: "8px 16px",
-  backgroundColor: "#007AFF",
-  color: "#fff",
-  border: "none",
-  borderRadius: 4,
-  cursor: "pointer"
-};
+ 
