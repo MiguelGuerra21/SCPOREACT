@@ -486,12 +486,12 @@ const AppContainer = () => {
         if (!file || !view) return;
 
         //Control del tamaño del archivo
-        const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+        const MAX_BYTES = 400 * 1024 * 1024; // 10 MB
 
         if (file.size > MAX_BYTES) {
             const mb = (file.size / (1024 * 1024)).toFixed(1);
             window.alert(
-                `El archivo pesa ${mb} MB, que supera el límite de 10 MB.\n` +
+                `El archivo pesa ${mb} MB, que supera el límite de 400 MB.\n` +
                 `Por favor reduce su tamaño antes de cargarlo.`
             );
 
@@ -500,7 +500,7 @@ const AppContainer = () => {
                 timestamp: new Date().toISOString(),
                 user: "Usuario1",
                 action: "Open shapefile rejected",
-                info: `Attempted to load "${file.name}" of ${mb} MB (>10 MB limit)`
+                info: `Attempted to load "${file.name}" of ${mb} MB (>400 MB limit)`
             });
 
             return;
