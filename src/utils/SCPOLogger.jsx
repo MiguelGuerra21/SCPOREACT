@@ -1,4 +1,3 @@
-// src/utils/SCPOLogger.js
 class SCPOLogger {
   static enabled = false;
   

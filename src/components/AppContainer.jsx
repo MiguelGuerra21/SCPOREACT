@@ -404,13 +404,11 @@ const AppContainer = () => {
         setBatchEditOpen(false);
         setTimeout(() => setBatchEditOpen(true), 0);
     }
-
-
+    
     // Sincronizar layersRef.current siempre que cambie layers
     useEffect(() => {
         layersRef.current = layers;
     }, [layers]);
-
 
     // Convierte geometría GeoJSON a geometría ArcGIS (point/polyline/polygon)
     const convertGeometry = (geo) => {
@@ -481,8 +479,7 @@ const AppContainer = () => {
         }
         return colors;
     }
-
-    // ----- Manejador de apertura de archivo (shapefile ZIP) -----
+    //Abrir un archivo
     const handleFileOpen = async (file) => {
 
         const view = viewRef.current;
@@ -1028,7 +1025,7 @@ return Text(Date(v), "DD/MM/YYYY");
             setLoadingMessage("");
         }
     };
-
+    //Exportar como shapefile
     async function exportLayerAsShapefile(entry) {
         const { layer, name, fechaCampos } = entry;
 
@@ -1124,7 +1121,6 @@ return Text(Date(v), "DD/MM/YYYY");
 
         saveAs(final, `${base}.zip`);
     }
-
 
     const toggleLayerVisibility = (id) => {
         setLayers((prev) =>

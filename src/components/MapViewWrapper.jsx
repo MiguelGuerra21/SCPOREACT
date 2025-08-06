@@ -111,9 +111,8 @@ const MapViewWrapper = ({
     }
   };
 
-  // Global Shift listeners
+  // Selección con Shift
   useEffect(() => {
-    //listeners globales para Shift
     const handleKeyDown = (e) => { 
       if (e.key === "Shift") shiftPressedRef.current = true; 
     };
@@ -142,6 +141,7 @@ const MapViewWrapper = ({
     };
   }, [showModeOptions]);
 
+  // Efecto para inicializar el mapa y la vista
   useEffect(() => {
     if (!mapDiv.current) return;
 

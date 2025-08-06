@@ -116,6 +116,17 @@ export default function BatchEditModal({
       const result = await layer.applyEdits({ updateFeatures: updates });
       const fails = result.updateFeaturesResults?.filter(r => !r.success) || [];
       if (fails.length) window.alert("Algunas fechas no se pudieron borrar");
+
+      // ─────────────── LOGGING HERE ───────────────
+      SCPOLogger.log({
+        timestamp: new Date().toISOString(),
+        user: "Usuario1",
+        action: "Clear all etapas",
+        info: `Cleared ${updates.length} features on layer "${lw.entry.name}", ` +
+          `fields: [${dateFields.join(", ")}]`
+      });
+      // ─────────────────────────────────────────────
+
       setRefreshId(id => id + 1);
     } catch (err) {
       console.error(err);
