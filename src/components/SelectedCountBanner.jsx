@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { FaChevronRight, FaChevronLeft } from "react-icons/fa";
+import styles from './SelectedCountBanner.module.css';
 
 const SelectedCountBanner = ({
   count,
@@ -13,78 +14,12 @@ const SelectedCountBanner = ({
   const isAndroid = Capacitor.getPlatform() === "android";
   if (count === 0) return null;
 
-  const containerStyle = {
-    position: "absolute",
-    top: isAndroid ? 100 : 70,
-    right: 16,
-    width: isOpen ? 200 : 40,
-    backgroundColor: "#fff",
-    borderRadius: 8,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-    overflow: "hidden",
-    transition: "width 0.3s",
-    zIndex: 1000,
-  };
-
-  const headerStyle = {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: isOpen ? "space-between" : "center",
-    padding: "8px 12px",
-    background: "linear-gradient(90deg, #4facfe, #00f2fe)",
-    color: "#fff",
-  };
-
-  const toggleBtnStyle = {
-    background: "none",
-    border: "none",
-    color: "#fff",
-    fontSize: 18,
-    cursor: "pointer",
-    transition: "transform 0.3s",
-  };
-
-  const contentStyle = {
-    display: isOpen ? "flex" : "none",
-    justifyContent: "space-around",
-    alignItems: "center",
-    padding: "12px",
-    gap: 8,
-  };
-
-  const editButtonStyle = {
-    width: 48,
-    height: 48,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "linear-gradient(180deg, #28a745 0%, #1fa85a 100%)",
-    border: "none",
-    borderRadius: 8,
-    cursor: "pointer",
-    transition: "background 0.2s",
-  };
-  const deselectButtonStyle = {
-    width: 48,
-    height: 48,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#fd7e14",   // orange
-    border: "none",
-    borderRadius: 8,
-    cursor: "pointer",
-    transition: "background 0.2s",
-  };
-
-  const iconStyle = { fontSize: 24, color: "#fff", lineHeight: 1 };
-
   return (
-    <div style={containerStyle}>
-      <div style={headerStyle}>
+    <div className={styles.containerStyle} style={{top: isAndroid ? 100 : 70, width: isOpen ? 200 : 40,}}>
+      <div className={styles.headerStyle} style={{justifyContent: isOpen ? "space-between" : "center"}}>
         {isOpen && <span>Seleccionados: {count}</span>}
         <button
-          style={toggleBtnStyle}
+          className={styles.toggleBtnStyle}
           onClick={() => setIsOpen((o) => !o)}
           aria-label={isOpen ? "Contraer" : "Expandir"}
         >
@@ -92,28 +27,28 @@ const SelectedCountBanner = ({
         </button>
       </div>
 
-      <div style={contentStyle}>
+      <div className={styles.contentStyle} style={{display: isOpen ? "flex" : "none",}}>
         {/* Editar atributos */}
         {hasPolygons && (
           <button
-            style={editButtonStyle}
+            className={styles.editButtonStyle}
             onClick={onBatchEdit}
             title="Editar atributos"
             onMouseEnter={e => e.currentTarget.style.background = "linear-gradient(180deg, #238636 0%, #1b7b4a 100%)"}
             onMouseLeave={e => e.currentTarget.style.background = "linear-gradient(180deg, #28a745 0%, #1fa85a 100%)"}
           >
-            <span style={{ fontSize: 24, color: "#fff" }}>✎</span>          
+            <span className={styles.iconStyle}>✎</span>          
           </button>
         )}
         {/* Deseleccionar todo */}
         <button
-          style={deselectButtonStyle}
+          className={styles.deselectButtonStyle}
           onClick={onDeselectAll}
           title="Deseleccionar todo"
           onMouseEnter={(e) => (e.currentTarget.style.background = "#e56b08")}
           onMouseLeave={(e) => (e.currentTarget.style.background = "#fd7e14")}
         >
-          <span style={{ fontSize: 24, color: "#fff" }}>✘</span>
+          <span className={styles.iconStyle}>✘</span>
         </button>
       </div>
     </div>
