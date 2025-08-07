@@ -15,6 +15,9 @@ import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
 import ExportWorker from "../workers/exportShapefile.worker.js";
 import SCPOLogger from "../utils/SCPOLogger";
+import { COLOR_PALETTE, COLOR_SIN_ESTADO } from "../utils/ColorPalette.jsx";
+
+
 
 const AppContainer = () => {
     // ----- Estados y refs -----
@@ -97,6 +100,48 @@ const AppContainer = () => {
         }
     }, []);
 
+
+
+    function esFechaValida(val) {
+        // Si el valor es null/undefined
+        if (val == null) return false;
+
+        // Si es un timestamp numérico (como 1753826400000)
+        if (typeof val === 'number') {
+            // Verificamos que sea un timestamp razonable (entre 1970 y 2100)
+            const year = new Date(val).getFullYear();
+            return year >= 1900 && year <= 2100;
+        }
+
+        // Si es instancia de Date
+        if (val instanceof Date) {
+            return !isNaN(val.getTime()) && val.getFullYear() >= 1900;
+        }
+
+        // Si es string
+        if (typeof val === 'string' && val.trim() !== '') {
+            const d = new Date(val);
+            return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
+        }
+
+        // Si es DateTime de Luxon
+        if (val?.isValid && typeof val.isValid === 'function') {
+            return val.isValid() && val.year >= 1900;
+        }
+
+        // Si es Moment.js
+        if (val?.isValid && typeof val.isValid === 'function' && val?.year) {
+            return val.isValid() && val.year() >= 1900;
+        }
+
+        // Para cualquier otro objeto con método getTime()
+        if (val?.getTime && typeof val.getTime === 'function') {
+            const d = new Date(val.getTime());
+            return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
+        }
+        return false;
+    }
+
     function detectarEstado(props, fechaCampos) {
         // 1. Handle undefined inputs
         if (!fechaCampos || !Array.isArray(fechaCampos)) {
@@ -140,46 +185,6 @@ const AppContainer = () => {
                 : "Sin estado";
         }
         return "Sin estado";
-    }
-
-    function esFechaValida(val) {
-        // Si el valor es null/undefined
-        if (val == null) return false;
-
-        // Si es un timestamp numérico (como 1753826400000)
-        if (typeof val === 'number') {
-            // Verificamos que sea un timestamp razonable (entre 1970 y 2100)
-            const year = new Date(val).getFullYear();
-            return year >= 1900 && year <= 2100;
-        }
-
-        // Si es instancia de Date
-        if (val instanceof Date) {
-            return !isNaN(val.getTime()) && val.getFullYear() >= 1900;
-        }
-
-        // Si es string
-        if (typeof val === 'string' && val.trim() !== '') {
-            const d = new Date(val);
-            return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
-        }
-
-        // Si es DateTime de Luxon
-        if (val?.isValid && typeof val.isValid === 'function') {
-            return val.isValid() && val.year >= 1900;
-        }
-
-        // Si es Moment.js
-        if (val?.isValid && typeof val.isValid === 'function' && val?.year) {
-            return val.isValid() && val.year() >= 1900;
-        }
-
-        // Para cualquier otro objeto con método getTime()
-        if (val?.getTime && typeof val.getTime === 'function') {
-            const d = new Date(val.getTime());
-            return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
-        }
-        return false;
     }
 
     const recalculateStatesInBatch = async (layer, featureIds, fechaCampos) => {
@@ -469,16 +474,6 @@ const AppContainer = () => {
         }
     };
 
-    function generateRedToGreenGradient(steps) {
-        const colors = [];
-        for (let i = 0; i < steps; i++) {
-            const t = i / Math.max(steps - 1, 1); // 0 → 1
-            const r = Math.round(255 * (1 - t));  // rojo decrece
-            const g = Math.round(255 * t);        // verde crece
-            colors.push([r, g, 0]);               // RGB
-        }
-        return colors;
-    }
     //Abrir un archivo
     const handleFileOpen = async (file) => {
 
@@ -681,6 +676,29 @@ const AppContainer = () => {
                 return indexA - indexB;
             });
 
+
+            const buildStateColorMap = (estadosUnicos) => {
+                const map = {};
+                // 1) Extraemos solo los coreStates en orden:
+                const coreStates = estadosUnicos.filter(e =>
+                    e !== "Sin estado" &&
+                    e.trim().toLowerCase() !== "liberado" &&
+                    e.trim().toLowerCase() !== "rechazado"
+                );
+                const stateColorMap = {};
+                coreStates.forEach((estado, i) => {
+                    // i irá de 0,1,2… por cada estado detectado
+                    map[estado.trim().toLowerCase()] = COLOR_PALETTE[i];
+                });
+
+                // 2) Liberado/Rechazado y Sin estado siempre a las posiciones fijas
+                map["liberado"] = COLOR_PALETTE[12];
+                map["rechazado"] = COLOR_PALETTE[13];
+                map["sin estado"] = COLOR_SIN_ESTADO;
+
+                return map;
+            };
+
             // --- Crear campos dinámicos ---
             const firstProps = geojson.features[0]?.properties || {};
             const dynamicFields = Object.entries(firstProps).map(([key, value]) => {
@@ -702,68 +720,51 @@ const AppContainer = () => {
                 dynamicFields.push({ name: "Estado", alias: "Estado", type: "string" });
             }
 
-            // --- Asignar colores ---
-            const estadoAColor = {};
-            setStateColors(prev => ({ ...prev, ...estadoAColor }));
-            const gradiente = generateRedToGreenGradient(estadosUnicos.length);
-            estadosUnicos.forEach((estado, i) => {
-                if (estado === "Sin estado") {
-                    estadoAColor[estado] = [255, 255, 255, 0.5];
-                } else {
-                    estadoAColor[estado] = [...gradiente[i], 0.5];
-                }
-            });
-
 
             // --- Detectar tipo de geometría ---
             const geomType0 = geojson.features[0]?.geometry?.type;
             let geometryType = "polygon";
             if (geomType0 === "Point") geometryType = "point";
-            else if (geomType0 === "LineString" || geomType0 === "MultiLineString")
-                geometryType = "polyline";
+            else if (geomType0 === "LineString" || geomType0 === "MultiLineString") geometryType = "polyline";
 
-            // --- Construir uniqueValueInfos ---
-            const uniqueValueInfos = estadosUnicos.map((estado) => {
+
+            const stateColorMap = buildStateColorMap(estadosUnicos);
+
+
+            // Crea los únicosValueInfos usando el map recién construido
+            // construyes tus uniqueValueInfos:
+            const uniqueValueInfos = estadosUnicos.map(estado => {
+                // Normalizamos la llave a minúsculas:
+                const key = estado.toLowerCase();
+                const rgb = stateColorMap[key] || COLOR_SIN_ESTADO;
+                const fillColor = [...rgb, 0.5];
+                const outlineColor = key === "sin estado"
+                    ? [0, 0, 0, 1]
+                    : [...rgb, 1];
+
                 let symbol;
-                if (estado === "Sin estado") {
-                    symbol =
-                        geometryType === "point"
-                            ? {
-                                type: "simple-marker",
-                                size: "8px",
-                                style: "circle",
-                                color: [0, 0, 0, 0],
-                                outline: { color: [0, 0, 0, 1], width: 1 },
-                            }
-                            : geometryType === "polyline"
-                                ? { type: "simple-line", color: [0, 0, 0, 1], width: 2 }
-                                : {
-                                    type: "simple-fill",
-                                    color: [0, 0, 0, 0],
-                                    outline: { color: [0, 0, 0, 1], width: 2 },
-                                };
+                if (geometryType === "point") {
+                    symbol = {
+                        type: "simple-marker",
+                        size: "8px",
+                        style: "circle",
+                        color: fillColor,
+                        outline: { color: outlineColor, width: 1 }
+                    };
+                } else if (geometryType === "polyline") {
+                    symbol = {
+                        type: "simple-line",
+                        color: outlineColor,
+                        width: 2
+                    };
                 } else {
-                    const baseColor = estadoAColor[estado];
-                    const borderColor = baseColor
-                        ? [baseColor[0], baseColor[1], baseColor[2], 1]
-                        : [0, 0, 0, 1];
-                    symbol =
-                        geometryType === "point"
-                            ? {
-                                type: "simple-marker",
-                                size: "8px",
-                                style: "circle",
-                                color: baseColor,
-                                outline: { color: borderColor, width: 1 },
-                            }
-                            : geometryType === "polyline"
-                                ? { type: "simple-line", color: borderColor, width: 2 }
-                                : {
-                                    type: "simple-fill",
-                                    color: baseColor,
-                                    outline: { color: borderColor, width: 2 },
-                                };
+                    symbol = {
+                        type: "simple-fill",
+                        color: fillColor,
+                        outline: { color: outlineColor, width: 1.5 }
+                    };
                 }
+
                 return { value: estado, symbol, label: estado };
             });
             // 1) Filtra sólo los campos que empiezan por "Fecha "
@@ -987,7 +988,7 @@ return Text(Date(v), "DD/MM/YYYY");
                 extent: extentResult?.extent || null,
                 uniqueValueInfos,
                 estados: estadosUnicos,
-                stateColors: estadoAColor,
+                stateColors: stateColorMap,
                 fechaCampos,
                 etapaCampos,
                 // Funciones de actualización
@@ -1005,7 +1006,6 @@ return Text(Date(v), "DD/MM/YYYY");
                 }
             };
 
-            setStateColors(estadoAColor);
             setLayers((prev) => [...prev, newEntry]);
 
         } catch (err) {
