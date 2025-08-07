@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { FaTimes } from "react-icons/fa";
+import SCPOLogger from "../utils/SCPOLogger";
 
 export default function BatchEditModal({
   layers,
