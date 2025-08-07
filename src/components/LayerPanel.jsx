@@ -2,9 +2,11 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
 import { FaChevronRight, FaChevronLeft } from "react-icons/fa";
+import { COLOR_SIN_ESTADO } from "../utils/ColorPalette";
 
 const LayerPanel = ({
   layers = [],
+  stateColors,
   onToggleVisibility,
   onCenterView,
   onRemoveLayer,
@@ -100,7 +102,6 @@ const LayerPanel = ({
             estados,
             conteos,
             porcentajes,
-            stateColors: entry.stateColors || {}
           };
         } catch (error) {
           console.error(`Error procesando capa ${entry.id}:`, error);
@@ -115,7 +116,7 @@ const LayerPanel = ({
     updateLayerStats();
 
     return () => abortController.abort();
-  }, [layers]);
+  }, [layers, stateColors]);
 
   // Obtener estadísticas actuales
   const getCurrentStats = (layerId) => {
@@ -264,7 +265,7 @@ const LayerPanel = ({
         >
           {layers.map((entry) => {
             const isOpenLayer = openDetails === entry.id;
-            const { estados, conteos, porcentajes, stateColors } = getCurrentStats(entry.id);
+            const { estados, conteos, porcentajes } = getCurrentStats(entry.id);
             const estadosOrdenados = ["Sin estado"].concat(estados.filter(e => e !== "Sin estado"));
 
             return (
@@ -304,8 +305,14 @@ const LayerPanel = ({
                       <em style={{ color: "#888" }}>No hay estados detectados</em>
                     ) : (
                       estadosOrdenados.map((estado) => {
-                        const color = stateColors[estado];
-                        const borderColor = getBorderColor(color, estado);
+
+                        const key = estado.trim().toLowerCase();
+                        const rgb = entry.stateColors[key] || COLOR_SIN_ESTADO;
+                        const fill = `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.5)`;
+                        const outline = key === "sin estado"
+                          ? "#000"
+                          : `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 1)`;
+                          
                         const pct = porcentajes[estado] || 0;
                         const count = conteos[estado] || 0;
                         const isHidden = hiddenStates[entry.id]?.[estado];
@@ -335,8 +342,8 @@ const LayerPanel = ({
                                 width: 14,
                                 height: 14,
                                 marginRight: 8,
-                                backgroundColor: isHidden ? "#aaa" : toCssColor(color),
-                                border: `2px solid ${isHidden ? "#888" : borderColor}`,
+                                backgroundColor: fill,
+                                border: `2px solid ${outline}`,
                                 borderRadius: 3,
                                 flexShrink: 0,
                                 transition: "all 0.2s ease",
