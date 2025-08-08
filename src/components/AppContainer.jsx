@@ -36,6 +36,7 @@ const AppContainer = () => {
     const [loadingMessage, setLoadingMessage] = useState("");
     const [stateColors, setStateColors] = useState({});
     const [hiddenStates, setHiddenStates] = useState({});
+    const [exportModalOpen, setExportModalOpen] = useState(false);
 
 
     // Ref al MapView
@@ -99,8 +100,6 @@ const AppContainer = () => {
             console.error("Error updating layer filter:", error);
         }
     }, []);
-
-
 
     function esFechaValida(val) {
         // Si el valor es null/undefined
@@ -1126,6 +1125,36 @@ return Text(Date(v), "DD/MM/YYYY");
         saveAs(final, `${base}.zip`);
     }
 
+    async function exportLayerWithOgr2ogr(entry) {
+        // 1) build GeoJSON just like you already do
+        const geojson = {
+            type: "FeatureCollection",
+            features: entry.layerView.graphics.map(g => {
+                // … your geometry & props → GeoJSON …
+            })
+        };
+
+        // 2) POST it to your local ogr2ogr service
+        const form = new FormData();
+        form.append("geojson", new Blob([JSON.stringify(geojson)], {
+            type: "application/json"
+        }), "data.geojson");
+
+        const resp = await fetch("http://localhost:3002/convert", {
+            method: "POST",
+            body: form
+        });
+
+        if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error("Export failed: " + txt);
+        }
+
+        // 3) stream the zip back to the user
+        const blob = await resp.blob();
+        saveAs(blob, `${entry.name}.zip`);
+    }
+
     const toggleLayerVisibility = (id) => {
         setLayers((prev) =>
             prev.map((entry) => {
@@ -1215,7 +1244,6 @@ return Text(Date(v), "DD/MM/YYYY");
             );
         }
     };
-    const [exportModalOpen, setExportModalOpen] = useState(false);
     const handleExportRequest = () => {
         if (layers.length === 0) {
             window.alert("No hay capas cargadas para guardar.");
@@ -1226,22 +1254,69 @@ return Text(Date(v), "DD/MM/YYYY");
     const handleExportConfirm = async (idx) => {
         setExportModalOpen(false);
         setLoading(true);
-        setLoadingMessage("Guardando archivo...");
+        setLoadingMessage("Guardando archivo…");
+
         try {
             const entry = layers[idx];
-            await exportLayerAsShapefile(entry);
+
+            // 1) pull out your GeoJSON directly from the FeatureLayer:
+            const query = entry.layer.createQuery();
+            query.where = "1=1";
+            query.returnGeometry = true;
+            query.outFields = ["*"];
+            const { features } = await entry.layer.queryFeatures(query);
+
+            // 2) normalize to pure GeoJSON FeatureCollection
+            const geojson = {
+                type: "FeatureCollection",
+                features: features.map(f => ({
+                    type: "Feature",
+                    geometry: f.geometry.toJSON(),        // ArcGIS geometry → plain GeoJSON
+                    properties: { ...f.attributes }       // copy all attributes
+                }))
+            };
+
+            // 3) send to your ogr2ogr service
+            const form = new FormData();
+            form.append("geojson", new Blob([JSON.stringify(geojson)], {
+                type: "application/json"
+            }), "data.geojson");
+
+            const resp = await fetch("http://localhost:3002/convert", {
+                method: "POST",
+                body: form
+            });
+
+            if (!resp.ok) {
+                throw new Error(`Servidor respondió ${resp.status}`);
+            }
+
+            // 4) get the zip blob back
+            const zipBlob = await resp.blob();
+
+            // 5) trigger a browser download
+            const url = URL.createObjectURL(zipBlob);
+            const a = document.createElement("a");
+            a.href = url;
+            // derive filename from entry.name
+            const name = entry.name.replace(/\W+/g, "_").toLowerCase();
+            a.download = `${name}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+
+        } catch (err) {
+            console.error("Error al exportar con ogr2ogr:", err);
+            alert("Error al exportar: " + err.message);
+        } finally {
+            setLoading(false);
+            setLoadingMessage("");
         }
-        catch (error) {
-            console.error("Error en exportLayerAsShapefile:", error);
-            alert("Error al exportar: " + error.message);
-        }
-        setLoading(false);
-        setLoadingMessage(""); // Oculta el overlay al terminar
     };
     const handleExportCancel = () => {
-        setExportModalOpen(false);
-    };
-
+    setExportModalOpen(false);
+  };
     // ----- JSX de render -----
     return (
         <div>
