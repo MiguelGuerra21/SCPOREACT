@@ -16,6 +16,7 @@ import BatchEditModal from "./BatchEditModal";
 import ExportWorker from "../workers/exportShapefile.worker.js";
 import SCPOLogger from "../utils/SCPOLogger";
 import { COLOR_PALETTE, COLOR_SIN_ESTADO } from "../utils/ColorPalette.jsx";
+import { arcgisToGeoJSON } from "arcgis-to-geojson-utils";
 
 
 
@@ -1024,136 +1025,6 @@ return Text(Date(v), "DD/MM/YYYY");
             setLoadingMessage("");
         }
     };
-    //Exportar como shapefile
-    async function exportLayerAsShapefile(entry) {
-        const { layer, name, fechaCampos } = entry;
-
-        // 1) Query
-        const q = layer.createQuery();
-        q.where = "1=1";
-        q.returnGeometry = true;
-        q.outFields = ["*"];
-        const { features: arcFeatures } = await layer.queryFeatures(q);
-
-        // 2) GeoJSON con fechas como "YYYY-MM-DD"
-        const features = arcFeatures.map(f => {
-            // 2.a) geometría → GeoJSON
-            let geom = f.geometry;
-            if (geom.spatialReference?.isWebMercator) {
-                geom = webMercatorToGeographic(geom);
-            }
-            let geometry;
-            switch (geom.type) {
-                case "point":
-                    geometry = { type: "Point", coordinates: [geom.x, geom.y] };
-                    break;
-                case "polyline":
-                    geometry = geom.paths.length > 1
-                        ? { type: "MultiLineString", coordinates: geom.paths }
-                        : { type: "LineString", coordinates: geom.paths[0] };
-                    break;
-                case "polygon":
-                    geometry = { type: "Polygon", coordinates: geom.rings };
-                    break;
-                default:
-                    return null;
-            }
-
-            // 2.b) atributos + fechas como ISO strings
-            const props = { ...f.attributes };
-            fechaCampos.forEach(field => {
-                const raw = f.attributes[field];
-                if (raw != null && raw !== "") {
-                    const d = new Date(raw);
-                    const Y = d.getFullYear();
-                    const M = String(d.getMonth() + 1).padStart(2, "0");
-                    const D = String(d.getDate()).padStart(2, "0");
-                    props[field] = `${Y}-${M}-${D}`;
-                } else {
-                    props[field] = "";
-                }
-            });
-
-            return { type: "Feature", geometry, properties: props };
-        }).filter(Boolean);
-
-        const geojson = { type: "FeatureCollection", features };
-
-        // 3) Worker
-        const worker = new ExportWorker();
-        const zipBlob = await new Promise((resolve, reject) => {
-            worker.onmessage = e => {
-                if (e.data.type === "done") resolve(e.data.blob);
-                else reject(new Error(e.data.message));
-                worker.terminate();
-            };
-            worker.onerror = err => { reject(err); worker.terminate(); };
-            // enviamos la lista de campos (por si queremos tratarlos en el worker)
-            worker.postMessage({ geojson, dateFieldNames: fechaCampos });
-        });
-
-        // 4) renombrar entradas ZIP y poner .cpg
-        const buf = await zipBlob.arrayBuffer();
-        const origZ = await JSZip.loadAsync(buf);
-        const newZ = new JSZip();
-        const base = name.replace(/[^a-z0-9]/gi, "_").toLowerCase();
-
-        await Promise.all(Object.keys(origZ.files).map(async path => {
-            const data = await origZ.file(path).async("arraybuffer");
-            const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
-            newZ.file(`${base}${ext}`, data);
-        }));
-        newZ.file(`${base}.cpg`, "CP1252");
-
-        const final = await newZ.generateAsync({
-            type: "blob",
-            compression: "DEFLATE",
-            compressionOptions: { level: 9 }
-        });
-
-        // ─────────────── LOGGING  ───────────────
-        SCPOLogger.log({
-            timestamp: new Date().toISOString(),
-            user: "Usuario1",
-            action: "Export shapefile",
-            info: `Exported layer "${name}" as ${base}.zip; ` +
-                `features: ${features.length}; ` +
-                `output size: ${final.size} bytes.`
-        });
-        // ─────────────────────────────────────────
-
-        saveAs(final, `${base}.zip`);
-    }
-
-    async function exportLayerWithOgr2ogr(entry) {
-        // 1) build GeoJSON just like you already do
-        const geojson = {
-            type: "FeatureCollection",
-            features: entry.layerView.graphics.map(g => {
-                // … your geometry & props → GeoJSON …
-            })
-        };
-
-        // 2) POST it to your local ogr2ogr service
-        const form = new FormData();
-        form.append("geojson", new Blob([JSON.stringify(geojson)], {
-            type: "application/json"
-        }), "data.geojson");
-
-        const resp = await fetch("http://localhost:3002/convert", {
-            method: "POST",
-            body: form
-        });
-
-        if (!resp.ok) {
-            const txt = await resp.text();
-            throw new Error("Export failed: " + txt);
-        }
-
-        // 3) stream the zip back to the user
-        const blob = await resp.blob();
-        saveAs(blob, `${entry.name}.zip`);
-    }
 
     const toggleLayerVisibility = (id) => {
         setLayers((prev) =>
@@ -1269,11 +1140,14 @@ return Text(Date(v), "DD/MM/YYYY");
             // 2) normalize to pure GeoJSON FeatureCollection
             const geojson = {
                 type: "FeatureCollection",
-                features: features.map(f => ({
-                    type: "Feature",
-                    geometry: f.geometry.toJSON(),        // ArcGIS geometry → plain GeoJSON
-                    properties: { ...f.attributes }       // copy all attributes
-                }))
+                features: features.map(f => {
+                    const arc = {
+                        geometry: f.geometry.toJSON(),
+                        attributes: { ...f.attributes }
+                    };
+                    const g = arcgisToGeoJSON(arc); // convierte a GeoJSON Feature
+                    return g;
+                })
             };
 
             // 3) send to your ogr2ogr service
