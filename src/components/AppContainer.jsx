@@ -3,8 +3,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import JSZip from "jszip";
 import shpjs from "shpjs";
-import { saveAs } from "file-saver";
-import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import TopMenu from "./TopMenu";
 import FileLoader from "./FileLoader";
@@ -13,10 +11,11 @@ import SelectedCountBanner from "./SelectedCountBanner";
 import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
-import ExportWorker from "../workers/exportShapefile.worker.js";
 import SCPOLogger from "../utils/SCPOLogger";
 import { COLOR_PALETTE, COLOR_SIN_ESTADO } from "../utils/ColorPalette.jsx";
-import { arcgisToGeoJSON } from "arcgis-to-geojson-utils";
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
+import { Capacitor } from '@capacitor/core';
 
 
 
@@ -1126,59 +1125,54 @@ return Text(Date(v), "DD/MM/YYYY");
         setExportModalOpen(false);
         setLoading(true);
         setLoadingMessage("Guardando archivo…");
-
         try {
             const entry = layers[idx];
-
-            // 1) pull out your GeoJSON directly from the FeatureLayer:
             const query = entry.layer.createQuery();
             query.where = "1=1";
             query.returnGeometry = true;
             query.outFields = ["*"];
             const { features } = await entry.layer.queryFeatures(query);
 
-            // 2) normalize to pure GeoJSON FeatureCollection
+            // Convertir features ArcGIS -> GeoJSON válido
             const geojson = {
                 type: "FeatureCollection",
-                features: features.map(f => {
-                    const arc = {
-                        geometry: f.geometry.toJSON(),
-                        attributes: { ...f.attributes }
-                    };
-                    const g = arcgisToGeoJSON(arc); // convierte a GeoJSON Feature
-                    return g;
-                })
+                features: features.map(f => ({
+                    type: "Feature",
+                    geometry: {
+                        type: f.geometry.type === "polygon" ? "Polygon" :
+                            f.geometry.type === "polyline" ? "LineString" :
+                                f.geometry.type === "point" ? "Point" : null,
+                        coordinates: arcgisToGeoJSONCoords(f.geometry)
+                    },
+                    properties: { ...f.attributes }
+                }))
             };
 
-            // 3) send to your ogr2ogr service
             const form = new FormData();
-            form.append("geojson", new Blob([JSON.stringify(geojson)], {
-                type: "application/json"
-            }), "data.geojson");
+            form.append("geojson", new Blob([JSON.stringify(geojson)], { type: "application/json" }), "data.geojson");
 
-            const resp = await fetch("http://localhost:3002/convert", {
-                method: "POST",
-                body: form
-            });
+            const serverUrl = isAndroidEmulator()
+                ? "http://10.0.2.2:3002/convert"
+                : "http://localhost:3002/convert";
 
-            if (!resp.ok) {
-                throw new Error(`Servidor respondió ${resp.status}`);
+            const resp = await fetch(serverUrl, { method: "POST", body: form });
+
+            if (!resp.ok) throw new Error(`Servidor respondió ${resp.status}`);
+
+            const blob = await resp.blob();
+
+            if (isRunningOnCapacitor()) {
+                await downloadAndSaveZip(blob, `${entry.name.replace(/\W+/g, "_").toLowerCase()}.zip`);
+            } else {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${entry.name.replace(/\W+/g, "_").toLowerCase()}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
             }
-
-            // 4) get the zip blob back
-            const zipBlob = await resp.blob();
-
-            // 5) trigger a browser download
-            const url = URL.createObjectURL(zipBlob);
-            const a = document.createElement("a");
-            a.href = url;
-            // derive filename from entry.name
-            const name = entry.name.replace(/\W+/g, "_").toLowerCase();
-            a.download = `${name}.zip`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
 
         } catch (err) {
             console.error("Error al exportar con ogr2ogr:", err);
@@ -1188,9 +1182,119 @@ return Text(Date(v), "DD/MM/YYYY");
             setLoadingMessage("");
         }
     };
+
+    // Conversión ArcGIS Geometry -> GeoJSON coordinates
+    function arcgisToGeoJSONCoords(geom) {
+        if (geom.type === "polygon") {
+            return geom.rings; // mismo formato que GeoJSON Polygon
+        }
+        if (geom.type === "polyline") {
+            return geom.paths.length === 1 ? geom.paths[0] : geom.paths;
+        }
+        if (geom.type === "point") {
+            return [geom.x, geom.y];
+        }
+        return null;
+    }
+
     const handleExportCancel = () => {
-    setExportModalOpen(false);
-  };
+        setExportModalOpen(false);
+    };
+
+    //For Mobile Export
+    const isRunningOnCapacitor = () => Capacitor && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+    const isAndroidEmulator = () => isRunningOnCapacitor() && Capacitor.getPlatform() === 'android';
+
+    function arrayBufferToBase64(buffer) {
+        let binary = '';
+        const bytes = new Uint8Array(buffer);
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+
+    async function downloadAndSaveZip(respBlob, filename) {
+        // navegador normal -> descarga con <a>
+        if (!isRunningOnCapacitor()) {
+            const url = URL.createObjectURL(respBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            return;
+        }
+
+        // En Capacitor (nativo)
+        // 1) intentamos usar Share plugin (import dinámico)
+        let Share = null;
+        try {
+            const mod = await import('@capacitor/share');
+            Share = mod.Share;
+        } catch (err) {
+            // plugin no disponible (no instalado o bundler web), seguimos al fallback
+            console.warn('Share plugin no disponible:', err);
+        }
+
+        // Convertir blob -> base64 string
+        const arrayBuffer = await respBlob.arrayBuffer();
+        const base64 = arrayBufferToBase64(arrayBuffer);
+
+        // 2) si Share está disponible, escribe a Filesystem temporalmente y compartelo
+        if (Share) {
+            // intentar escribir en un path accesible
+            try {
+                // Usar Directory.Data o Directory.External según prefieras.
+                // Directory.Data es más seguro y no requiere permisos.
+                const savePath = `shapefiles/${filename}`;
+                await Filesystem.writeFile({
+                    path: savePath,
+                    data: base64,
+                    directory: Directory.Data,
+                    recursive: true
+                });
+                const uriResult = await Filesystem.getUri({ directory: Directory.Data, path: savePath });
+                // uriResult.uri -> formato: file:///...
+                await Share.share({
+                    title: 'Shapefile',
+                    text: 'Archivo shapefile',
+                    url: uriResult.uri,
+                    dialogTitle: 'Guardar / Abrir shapefile'
+                });
+                return;
+            } catch (err) {
+                console.warn('Error guardando+compartiendo con Share:', err);
+                // seguimos al fallback de escribir en External
+            }
+        }
+
+        // 3) Fallback: escribir en External (Android) y notificar al usuario
+        try {
+            const extPath = `downloads/${filename}`;
+            await Filesystem.writeFile({
+                path: extPath,
+                data: base64,
+                directory: Directory.External, // En Android este intento suele funcionar, pero depende de permisos
+                recursive: true
+            });
+
+            const uri = (await Filesystem.getUri({ directory: Directory.External, path: extPath })).uri;
+            // intenta abrir con Share (si disponible)
+            if (Share) await Share.share({ title: 'Shapefile', text: 'Archivo shapefile', url: uri });
+
+            // si no hay Share, informa al usuario dónde se ha guardado
+            alert(`Archivo guardado en: ${uri}`);
+            return;
+        } catch (err) {
+            console.error('Error escribiendo en External:', err);
+            alert('No se pudo guardar el fichero en el dispositivo. Intenta compartirlo desde la app.');
+        }
+    }
+
     // ----- JSX de render -----
     return (
         <div>
