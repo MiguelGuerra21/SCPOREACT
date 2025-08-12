@@ -14,8 +14,11 @@ import BatchEditModal from "./BatchEditModal";
 import SCPOLogger from "../utils/SCPOLogger";
 import { COLOR_PALETTE, COLOR_SIN_ESTADO } from "../utils/ColorPalette.jsx";
 import { Filesystem, Directory } from '@capacitor/filesystem';
-import { Share } from '@capacitor/share';
 import { Capacitor } from '@capacitor/core';
+import { Http } from '@capacitor-community/http';
+import { Share } from '@capacitor/share';
+
+
 
 
 
@@ -1125,6 +1128,7 @@ return Text(Date(v), "DD/MM/YYYY");
         setExportModalOpen(false);
         setLoading(true);
         setLoadingMessage("Guardando archivo…");
+
         try {
             const entry = layers[idx];
             const query = entry.layer.createQuery();
@@ -1133,7 +1137,6 @@ return Text(Date(v), "DD/MM/YYYY");
             query.outFields = ["*"];
             const { features } = await entry.layer.queryFeatures(query);
 
-            // Convertir features ArcGIS -> GeoJSON válido
             const geojson = {
                 type: "FeatureCollection",
                 features: features.map(f => ({
@@ -1148,42 +1151,83 @@ return Text(Date(v), "DD/MM/YYYY");
                 }))
             };
 
-            const form = new FormData();
-            form.append("geojson", new Blob([JSON.stringify(geojson)], { type: "application/json" }), "data.geojson");
+            const filename = `${entry.name.replace(/\W+/g, "_").toLowerCase()}.zip`;
 
-            const serverUrl = isAndroidEmulator()
-                ? "http://10.0.2.2:3002/convert"
-                : "http://localhost:3002/convert";
+            // --- WEB / DESKTOP path (same as before) ---
+            if (!isRunningOnCapacitor()) {
+                const form = new FormData();
+                form.append("geojson", new Blob([JSON.stringify(geojson)], { type: "application/json" }), "data.geojson");
 
-            const resp = await fetch(serverUrl, { method: "POST", body: form });
-
-            if (!resp.ok) throw new Error(`Servidor respondió ${resp.status}`);
-
-            const blob = await resp.blob();
-
-            if (isRunningOnCapacitor()) {
-                await downloadAndSaveZip(blob, `${entry.name.replace(/\W+/g, "_").toLowerCase()}.zip`);
-            } else {
+                const resp = await fetch("http://localhost:3002/convert", {
+                    method: 'POST',
+                    body: form,
+                });
+                if (!resp.ok) throw new Error(`Servidor respondió ${resp.status}`);
+                const blob = await resp.blob();
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
-                a.download = `${entry.name.replace(/\W+/g, "_").toLowerCase()}.zip`;
+                a.download = filename;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
                 URL.revokeObjectURL(url);
+
+                setLoading(false);
+                setLoadingMessage("");
+                return;
             }
+
+            // --- NATIVE path (Android/iOS) ---
+            // Use emulator IP for Android emulator: 10.0.2.2
+            // For physical device use the LAN IP of the PC: e.g. http://192.168.1.132:3002/convert
+            const hostForDevice = isAndroid() ? "http://10.0.2.2:3002/convert" : "http://localhost:3002/convert";
+            // If you're on a physical device, replace hostForDevice with your PC LAN IP:
+            // const hostForDevice = "http://192.168.1.132:3002/convert";
+
+            // Http.request (native) avoids CORS/cleartext problems
+            const httpResp = await Http.request({
+                method: "POST",
+                url: hostForDevice,
+                headers: { "Content-Type": "application/json", "Accept": "application/json" },
+                data: { geojson },
+                timeout: 120_000 // increase timeout for large exports
+            });
+
+            // expected server response: { filename: "export.zip", data: "<base64>" }
+            if (!httpResp || !httpResp.data || !httpResp.data.data) {
+                throw new Error("Respuesta inválida del servidor (esperado base64)");
+            }
+
+            const b64 = httpResp.data.data;
+            // write file to app storage (Directory.Data)
+            await Filesystem.writeFile({
+                path: filename,
+                data: b64,
+                directory: Directory.Data,
+            });
+
+            // get URI to show/share
+            const uriRes = await Filesystem.getUri({ directory: Directory.Data, path: filename });
+            const savedUri = uriRes.uri || uriRes.nativeURL || uriRes.path;
+
+            // optionally share
+            await Share.share({
+                title: "Export shapefile",
+                text: "Archivo exportado",
+                url: savedUri
+            });
+
+            alert("Exportado y guardado: " + savedUri);
 
         } catch (err) {
             console.error("Error al exportar con ogr2ogr:", err);
-            alert("Error al exportar: " + err.message);
+            alert("Error al exportar: " + (err?.message || err));
         } finally {
             setLoading(false);
             setLoadingMessage("");
         }
     };
-
-    // Conversión ArcGIS Geometry -> GeoJSON coordinates
     function arcgisToGeoJSONCoords(geom) {
         if (geom.type === "polygon") {
             return geom.rings; // mismo formato que GeoJSON Polygon
@@ -1196,14 +1240,13 @@ return Text(Date(v), "DD/MM/YYYY");
         }
         return null;
     }
-
     const handleExportCancel = () => {
         setExportModalOpen(false);
     };
 
     //For Mobile Export
     const isRunningOnCapacitor = () => Capacitor && typeof Capacitor.isNativePlatform === 'function' && Capacitor.isNativePlatform();
-    const isAndroidEmulator = () => isRunningOnCapacitor() && Capacitor.getPlatform() === 'android';
+    const isAndroid = () => isRunningOnCapacitor() && Capacitor.getPlatform() === 'android';
 
     function arrayBufferToBase64(buffer) {
         let binary = '';
@@ -1214,7 +1257,6 @@ return Text(Date(v), "DD/MM/YYYY");
         }
         return btoa(binary);
     }
-
     async function downloadAndSaveZip(respBlob, filename) {
         // navegador normal -> descarga con <a>
         if (!isRunningOnCapacitor()) {
