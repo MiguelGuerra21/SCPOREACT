@@ -157,7 +157,7 @@ const AppContainer = () => {
         if (!props || typeof props !== 'object') {
             return "Sin estado";
         }
-
+        console.log("Lista campos:" + fechaCampos);
         // 4. Process fechaCampos in reverse order
         for (let i = fechaCampos.length - 1; i >= 0; i--) {
             const fechaCampo = fechaCampos[i];
@@ -179,7 +179,7 @@ const AppContainer = () => {
             const estadoVal = props.hasOwnProperty(etapaCampo)
                 ? props[etapaCampo]
                 : "";
-
+             console.log("Valor fechas:" + estadoVal);
             return estadoVal && estadoVal.trim() !== ""
                 ? estadoVal.trim()
                 : "Sin estado";
@@ -1026,105 +1026,290 @@ return Text(Date(v), "DD/MM/YYYY");
         }
     };
     //Exportar como shapefile
-    async function exportLayerAsShapefile(entry) {
-        const { layer, name, fechaCampos } = entry;
+async function exportLayerAsShapefile(entry) {
+    try {
+        const { layer, name, fechaCampos = [] } = entry;
 
-        // 1) Query
+        // 1) Validación inicial de la capa
+        if (!layer || typeof layer.queryFeatures !== 'function') {
+            throw new Error("Capa no válida o no soportada");
+        }
+
+        // 2) Query features con manejo mejorado de errores
         const q = layer.createQuery();
         q.where = "1=1";
         q.returnGeometry = true;
         q.outFields = ["*"];
-        const { features: arcFeatures } = await layer.queryFeatures(q);
-
-        // 2) GeoJSON con fechas como "YYYY-MM-DD"
-        const features = arcFeatures.map(f => {
-            // 2.a) geometría → GeoJSON
-            let geom = f.geometry;
-            if (geom.spatialReference?.isWebMercator) {
-                geom = webMercatorToGeographic(geom);
+        q.returnZ = false;
+        q.returnM = false;
+        
+        let arcFeatures;
+        try {
+            const result = await layer.queryFeatures(q);
+            arcFeatures = result.features || [];
+            if (arcFeatures.length === 0) {
+                throw new Error("La capa no contiene features para exportar");
             }
-            let geometry;
-            switch (geom.type) {
-                case "point":
-                    geometry = { type: "Point", coordinates: [geom.x, geom.y] };
-                    break;
-                case "polyline":
-                    geometry = geom.paths.length > 1
-                        ? { type: "MultiLineString", coordinates: geom.paths }
-                        : { type: "LineString", coordinates: geom.paths[0] };
-                    break;
-                case "polygon":
-                    geometry = { type: "Polygon", coordinates: geom.rings };
-                    break;
-                default:
-                    return null;
-            }
+        } catch (err) {
+            console.error("Error en queryFeatures:", err);
+            throw new Error(`Error al consultar features: ${err.message}`);
+        }
 
-            // 2.b) atributos + fechas como ISO strings
-            const props = { ...f.attributes };
-            fechaCampos.forEach(field => {
-                const raw = f.attributes[field];
-                if (raw != null && raw !== "") {
-                    const d = new Date(raw);
-                    const Y = d.getFullYear();
-                    const M = String(d.getMonth() + 1).padStart(2, "0");
-                    const D = String(d.getDate()).padStart(2, "0");
-                    props[field] = `${Y}-${M}-${D}`;
-                } else {
-                    props[field] = "";
+        // 3) Función para normalizar fechas
+        const normalizeDate = (value) => {
+            if (!value && value !== 0) return "";
+            
+            try {
+                // Si ya está en formato dd/mm/yyyy, devolver tal cual
+                if (typeof value === 'string' && /^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
+                    return value;
                 }
+                
+                // Convertir desde timestamp, fecha ISO u otros formatos
+                const date = new Date(value);
+                if (isNaN(date.getTime())) return "";
+                
+                const day = String(date.getDate()).padStart(2, '0');
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                return `${day}/${month}/${date.getFullYear()}`;
+            } catch {
+                return "";
+            }
+        };
+
+        // 4) Convertir a GeoJSON con validación reforzada
+        const features = await Promise.all(arcFeatures.map(async (f) => {
+            try {
+                if (!f || !f.geometry) return null;
+
+                // Convertir geometría con validación de coordenadas
+                let geom = f.geometry;
+                if (geom.spatialReference?.isWebMercator) {
+                    try {
+                        geom = webMercatorToGeographic(geom);
+                    } catch (err) {
+                        console.warn("Error al convertir geometría:", err);
+                        return null;
+                    }
+                }
+
+                // Validar y normalizar geometría
+                let geometry;
+                switch (geom.type) {
+                    case "point":
+                        if (typeof geom.x !== 'number' || typeof geom.y !== 'number' || 
+                            isNaN(geom.x) || isNaN(geom.y)) {
+                            return null;
+                        }
+                        geometry = { 
+                            type: "Point", 
+                            coordinates: [Number(geom.x), Number(geom.y)] 
+                        };
+                        break;
+                    case "polyline":
+                        if (!Array.isArray(geom.paths)) return null;
+                        const validPaths = geom.paths.filter(path => 
+                            Array.isArray(path) && path.length > 0
+                        );
+                        if (validPaths.length === 0) return null;
+                        geometry = validPaths.length > 1
+                            ? { type: "MultiLineString", coordinates: validPaths }
+                            : { type: "LineString", coordinates: validPaths[0] };
+                        break;
+                    case "polygon":
+                        if (!Array.isArray(geom.rings)) return null;
+                        const validRings = geom.rings.filter(ring => 
+                            Array.isArray(ring) && ring.length > 0
+                        );
+                        if (validRings.length === 0) return null;
+                        geometry = { type: "Polygon", coordinates: validRings };
+                        break;
+                    default:
+                        return null;
+                }
+
+                // Procesar propiedades con manejo seguro de fechas y valores nulos
+                const props = {};
+                const attributes = f.attributes || {};
+                
+                // Procesar todos los campos, no solo los de fecha
+                Object.keys(attributes).forEach(field => {
+                    try {
+                        const rawValue = attributes[field];
+                        
+                        // Campos de fecha especiales
+                        if (fechaCampos.includes(field)) {
+                            props[field] = normalizeDate(rawValue);
+                        } 
+                        // Otros campos
+                        else {
+                            // Convertir valores nulos/undefined a string vacío
+                            props[field] = rawValue != null ? String(rawValue) : "";
+                        }
+                    } catch (err) {
+                        console.warn(`Error al procesar campo ${field}:`, err);
+                        props[field] = "";
+                    }
+                });
+
+                return { 
+                    type: "Feature", 
+                    geometry, 
+                    properties: props 
+                };
+            } catch (err) {
+                console.warn("Error al procesar feature:", err);
+                return null;
+            }
+        }));
+
+        // Filtrar features nulas
+        const validFeatures = features.filter(Boolean);
+        if (validFeatures.length === 0) {
+            throw new Error("No se pudo convertir ninguna feature a GeoJSON válido");
+        }
+
+        // 5) Limpieza final del GeoJSON
+        const cleanFeatures = validFeatures.map(f => {
+            const cleanProps = {};
+            Object.keys(f.properties).forEach(key => {
+                // Eliminar espacios en blanco y caracteres especiales problemáticos
+                cleanProps[key] = f.properties[key]
+                    .toString()
+                    .replace(/[\x00-\x1F\x7F]/g, "") // Remover caracteres de control
+                    .trim();
             });
+            
+            return {
+                type: "Feature",
+                geometry: f.geometry,
+                properties: cleanProps
+            };
+        });
 
-            return { type: "Feature", geometry, properties: props };
-        }).filter(Boolean);
+        const geojson = { 
+            type: "FeatureCollection", 
+            features: cleanFeatures,
+            metadata: {
+                exportedAt: new Date().toISOString(),
+                sourceLayer: name,
+                featureCount: cleanFeatures.length,
+                originalFeatureCount: arcFeatures.length
+            }
+        };
 
-        const geojson = { type: "FeatureCollection", features };
+        // 6) Usar Worker con manejo mejorado
+        const worker = new Worker('/workers/exportWorker.js');
 
-        // 3) Worker
-        const worker = new ExportWorker();
-        const zipBlob = await new Promise((resolve, reject) => {
-            worker.onmessage = e => {
-                if (e.data.type === "done") resolve(e.data.blob);
-                else reject(new Error(e.data.message));
+        // Configurar timeout para el worker (30 segundos)
+        const workerTimeout = setTimeout(() => {
+            worker.terminate();
+            throw new Error("Tiempo de espera agotado al generar el Shapefile");
+        }, 30000);
+
+        const result = await new Promise((resolve, reject) => {
+            worker.onmessage = (e) => {
+                clearTimeout(workerTimeout);
+                if (e.data.type === 'done') {
+                    if (!e.data.zip || !(e.data.zip instanceof Uint8Array)) {
+                        reject(new Error("Formato de datos inválido del worker"));
+                        return;
+                    }
+                    resolve(e.data);
+                } else {
+                    reject(new Error(e.data.message || "Error en el worker"));
+                }
                 worker.terminate();
             };
-            worker.onerror = err => { reject(err); worker.terminate(); };
-            // enviamos la lista de campos (por si queremos tratarlos en el worker)
-            worker.postMessage({ geojson, dateFieldNames: fechaCampos });
+
+            worker.onerror = (err) => {
+                clearTimeout(workerTimeout);
+                reject(new Error(`Error en worker: ${err.message}`));
+                worker.terminate();
+            };
+
+            // Enviar datos con opciones
+            worker.postMessage({ 
+                geojson, 
+                layerName: entry.name.replace(/[^\w]/g, '_').slice(0, 50), // Nombre seguro para archivo
+                options: {
+                    encoding: "UTF-8",
+                    maxFieldSize: 254,
+                    strictMode: true,
+                    preserveFieldNames: true,
+                    dateFields: fechaCampos // Informar campos de fecha al worker
+                }
+            });
         });
 
-        // 4) renombrar entradas ZIP y poner .cpg
-        const buf = await zipBlob.arrayBuffer();
-        const origZ = await JSZip.loadAsync(buf);
-        const newZ = new JSZip();
-        const base = name.replace(/[^a-z0-9]/gi, "_").toLowerCase();
+        // 7) Validar y preparar el resultado final
+        if (!result?.zip || result.zip.length === 0) {
+            throw new Error("El archivo generado está vacío");
+        }
 
-        await Promise.all(Object.keys(origZ.files).map(async path => {
-            const data = await origZ.file(path).async("arraybuffer");
-            const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
-            newZ.file(`${base}${ext}`, data);
-        }));
-        newZ.file(`${base}.cpg`, "CP1252");
+        // Convertir a Blob con validación
+        let blob;
+        try {
+            blob = new Blob([result.zip], { 
+                type: 'application/zip' 
+            });
+            
+            if (blob.size === 0) {
+                throw new Error("El Blob generado está vacío");
+            }
+        } catch (err) {
+            throw new Error(`Error al crear el archivo ZIP: ${err.message}`);
+        }
 
-        const final = await newZ.generateAsync({
-            type: "blob",
-            compression: "DEFLATE",
-            compressionOptions: { level: 9 }
-        });
-
-        // ─────────────── LOGGING  ───────────────
+        // 8) Logging detallado
         SCPOLogger.log({
             timestamp: new Date().toISOString(),
-            user: "Usuario1",
+            user: "Sistema",
             action: "Export shapefile",
-            info: `Exported layer "${name}" as ${base}.zip; ` +
-                `features: ${features.length}; ` +
-                `output size: ${final.size} bytes.`
+            info: `Exportado "${name}" como ${entry.name}.zip`,
+            details: {
+                features: validFeatures.length,
+                originalFeatures: arcFeatures.length,
+                skipped: arcFeatures.length - validFeatures.length,
+                fileSize: blob.size,
+                dateFields: fechaCampos,
+                exportOptions: result.metadata
+            }
         });
-        // ─────────────────────────────────────────
 
-        saveAs(final, `${base}.zip`);
+        // 9) Descargar el archivo con nombre seguro
+        const safeName = entry.name.replace(/[^\wáéíóúÁÉÍÓÚñÑüÜ\s-]/g, '').trim().slice(0, 100);
+        saveAs(blob, `${safeName || 'export'}.zip`);
+
+        return {
+            success: true,
+            featureCount: validFeatures.length,
+            fileSize: blob.size,
+            fileName: `${safeName || 'export'}.zip`
+        };
+
+    } catch (err) {
+        console.error("Error en exportLayerAsShapefile:", err);
+        
+        SCPOLogger.log({
+            timestamp: new Date().toISOString(),
+            user: "Sistema",
+            action: "Export shapefile - ERROR",
+            info: `Error al exportar "${entry?.name || 'unknown'}"`,
+            error: {
+                name: err.name,
+                message: err.message,
+                stack: err.stack
+            },
+            details: {
+                layerName: entry?.name,
+                fechaCampos: entry?.fechaCampos || []
+            }
+        });
+
+        throw err;
     }
+}
 
     const toggleLayerVisibility = (id) => {
         setLayers((prev) =>
