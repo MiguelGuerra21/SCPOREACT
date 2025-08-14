@@ -58,20 +58,27 @@ class DBFGenerator {
       .slice(0, 10); // Longitud máxima pero sin convertir a mayúsculas
   }
 
-  detectFieldType(values) {
-    const sample = values[0];
-    if (typeof sample === 'number') return 'N';
-    if (sample instanceof Date) return 'D';
-    if (typeof sample === 'boolean') return 'L';
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(sample)) return 'D'; // dd/mm/yyyy
-    return 'C';
+detectFieldType(values) {
+  const sample = values.find(v => v != null);
+  if (typeof sample === 'number') return 'N';
+  if (sample instanceof Date) return 'D';
+  if (typeof sample === 'boolean') return 'L';
+  if (typeof sample === 'string') {
+    // aceptar dd/mm/yyyy o yyyymmdd o yyyy-mm-dd
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(sample) || /^\d{8}$/.test(sample) || /^\d{4}-\d{2}-\d{2}$/.test(sample)) return 'D';
   }
-
+  return 'C';
+}
   calculateFieldSize(key, values) {
+    // Si detectamos tipo fecha (strings 'dd/mm/yyyy' o Date) devolvemos 8
+    const sample = values.find(v => v != null);
+    if (sample instanceof Date || (/^\d{4}\d{2}\d{2}$/.test(String(sample))) || (/^\d{2}\/\d{2}\/\d{4}$/.test(String(sample)))) {
+      return 8;
+    }
+
     let maxSize = 1;
     values.forEach(value => {
       if (value != null) {
-        // Calcular tamaño considerando caracteres multibyte (UTF-8)
         const str = String(value);
         const byteLength = new TextEncoder().encode(str).length;
         maxSize = Math.max(maxSize, byteLength);
@@ -320,7 +327,6 @@ self.onmessage = async (e) => {
       compression: 'DEFLATE',
       compressionOptions: { level: 6 },
       platform: 'DOS', // Para máxima compatibilidad
-      encodeFileName: (name) => name // Mantener nombres originales
     });
 
     // 10. Validar el resultado antes de enviar

@@ -1862,14 +1862,20 @@
       return String(name).replace(/[^a-zA-Z0-9 áéíóúÁÉÍÓÚñÑüÜ_]/g, "_").slice(0, 10);
     }
     detectFieldType(values) {
-      const sample = values[0];
+      const sample = values.find((v) => v != null);
       if (typeof sample === "number") return "N";
       if (sample instanceof Date) return "D";
       if (typeof sample === "boolean") return "L";
-      if (/^\d{2}\/\d{2}\/\d{4}$/.test(sample)) return "D";
+      if (typeof sample === "string") {
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(sample) || /^\d{8}$/.test(sample) || /^\d{4}-\d{2}-\d{2}$/.test(sample)) return "D";
+      }
       return "C";
     }
     calculateFieldSize(key, values) {
+      const sample = values.find((v) => v != null);
+      if (sample instanceof Date || /^\d{4}\d{2}\d{2}$/.test(String(sample)) || /^\d{2}\/\d{2}\/\d{4}$/.test(String(sample))) {
+        return 8;
+      }
       let maxSize = 1;
       values.forEach((value) => {
         if (value != null) {
@@ -2069,10 +2075,8 @@
         type: "uint8array",
         compression: "DEFLATE",
         compressionOptions: { level: 6 },
-        platform: "DOS",
+        platform: "DOS"
         // Para máxima compatibilidad
-        encodeFileName: (name) => name
-        // Mantener nombres originales
       });
       if (!result || result.byteLength === 0) {
         throw new Error("Generated ZIP file is empty");

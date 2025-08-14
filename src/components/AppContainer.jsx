@@ -157,7 +157,7 @@ const AppContainer = () => {
         if (!props || typeof props !== 'object') {
             return "Sin estado";
         }
-        console.log("Lista campos:" + fechaCampos);
+
         // 4. Process fechaCampos in reverse order
         for (let i = fechaCampos.length - 1; i >= 0; i--) {
             const fechaCampo = fechaCampos[i];
@@ -179,7 +179,7 @@ const AppContainer = () => {
             const estadoVal = props.hasOwnProperty(etapaCampo)
                 ? props[etapaCampo]
                 : "";
-             console.log("Valor fechas:" + estadoVal);
+
             return estadoVal && estadoVal.trim() !== ""
                 ? estadoVal.trim()
                 : "Sin estado";
@@ -1027,289 +1027,349 @@ return Text(Date(v), "DD/MM/YYYY");
     };
     //Exportar como shapefile
 async function exportLayerAsShapefile(entry) {
-    try {
-        const { layer, name, fechaCampos = [] } = entry;
+  try {
+    const { layer, name, fechaCampos } = entry;
 
-        // 1) Validación inicial de la capa
-        if (!layer || typeof layer.queryFeatures !== 'function') {
-            throw new Error("Capa no válida o no soportada");
-        }
-
-        // 2) Query features con manejo mejorado de errores
-        const q = layer.createQuery();
-        q.where = "1=1";
-        q.returnGeometry = true;
-        q.outFields = ["*"];
-        q.returnZ = false;
-        q.returnM = false;
-        
-        let arcFeatures;
-        try {
-            const result = await layer.queryFeatures(q);
-            arcFeatures = result.features || [];
-            if (arcFeatures.length === 0) {
-                throw new Error("La capa no contiene features para exportar");
-            }
-        } catch (err) {
-            console.error("Error en queryFeatures:", err);
-            throw new Error(`Error al consultar features: ${err.message}`);
-        }
-
-        // 3) Función para normalizar fechas
-        const normalizeDate = (value) => {
-            if (!value && value !== 0) return "";
-            
-            try {
-                // Si ya está en formato dd/mm/yyyy, devolver tal cual
-                if (typeof value === 'string' && /^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
-                    return value;
-                }
-                
-                // Convertir desde timestamp, fecha ISO u otros formatos
-                const date = new Date(value);
-                if (isNaN(date.getTime())) return "";
-                
-                const day = String(date.getDate()).padStart(2, '0');
-                const month = String(date.getMonth() + 1).padStart(2, '0');
-                return `${day}/${month}/${date.getFullYear()}`;
-            } catch {
-                return "";
-            }
-        };
-
-        // 4) Convertir a GeoJSON con validación reforzada
-        const features = await Promise.all(arcFeatures.map(async (f) => {
-            try {
-                if (!f || !f.geometry) return null;
-
-                // Convertir geometría con validación de coordenadas
-                let geom = f.geometry;
-                if (geom.spatialReference?.isWebMercator) {
-                    try {
-                        geom = webMercatorToGeographic(geom);
-                    } catch (err) {
-                        console.warn("Error al convertir geometría:", err);
-                        return null;
-                    }
-                }
-
-                // Validar y normalizar geometría
-                let geometry;
-                switch (geom.type) {
-                    case "point":
-                        if (typeof geom.x !== 'number' || typeof geom.y !== 'number' || 
-                            isNaN(geom.x) || isNaN(geom.y)) {
-                            return null;
-                        }
-                        geometry = { 
-                            type: "Point", 
-                            coordinates: [Number(geom.x), Number(geom.y)] 
-                        };
-                        break;
-                    case "polyline":
-                        if (!Array.isArray(geom.paths)) return null;
-                        const validPaths = geom.paths.filter(path => 
-                            Array.isArray(path) && path.length > 0
-                        );
-                        if (validPaths.length === 0) return null;
-                        geometry = validPaths.length > 1
-                            ? { type: "MultiLineString", coordinates: validPaths }
-                            : { type: "LineString", coordinates: validPaths[0] };
-                        break;
-                    case "polygon":
-                        if (!Array.isArray(geom.rings)) return null;
-                        const validRings = geom.rings.filter(ring => 
-                            Array.isArray(ring) && ring.length > 0
-                        );
-                        if (validRings.length === 0) return null;
-                        geometry = { type: "Polygon", coordinates: validRings };
-                        break;
-                    default:
-                        return null;
-                }
-
-                // Procesar propiedades con manejo seguro de fechas y valores nulos
-                const props = {};
-                const attributes = f.attributes || {};
-                
-                // Procesar todos los campos, no solo los de fecha
-                Object.keys(attributes).forEach(field => {
-                    try {
-                        const rawValue = attributes[field];
-                        
-                        // Campos de fecha especiales
-                        if (fechaCampos.includes(field)) {
-                            props[field] = normalizeDate(rawValue);
-                        } 
-                        // Otros campos
-                        else {
-                            // Convertir valores nulos/undefined a string vacío
-                            props[field] = rawValue != null ? String(rawValue) : "";
-                        }
-                    } catch (err) {
-                        console.warn(`Error al procesar campo ${field}:`, err);
-                        props[field] = "";
-                    }
-                });
-
-                return { 
-                    type: "Feature", 
-                    geometry, 
-                    properties: props 
-                };
-            } catch (err) {
-                console.warn("Error al procesar feature:", err);
-                return null;
-            }
-        }));
-
-        // Filtrar features nulas
-        const validFeatures = features.filter(Boolean);
-        if (validFeatures.length === 0) {
-            throw new Error("No se pudo convertir ninguna feature a GeoJSON válido");
-        }
-
-        // 5) Limpieza final del GeoJSON
-        const cleanFeatures = validFeatures.map(f => {
-            const cleanProps = {};
-            Object.keys(f.properties).forEach(key => {
-                // Eliminar espacios en blanco y caracteres especiales problemáticos
-                cleanProps[key] = f.properties[key]
-                    .toString()
-                    .replace(/[\x00-\x1F\x7F]/g, "") // Remover caracteres de control
-                    .trim();
-            });
-            
-            return {
-                type: "Feature",
-                geometry: f.geometry,
-                properties: cleanProps
-            };
-        });
-
-        const geojson = { 
-            type: "FeatureCollection", 
-            features: cleanFeatures,
-            metadata: {
-                exportedAt: new Date().toISOString(),
-                sourceLayer: name,
-                featureCount: cleanFeatures.length,
-                originalFeatureCount: arcFeatures.length
-            }
-        };
-
-        // 6) Usar Worker con manejo mejorado
-        const worker = new Worker('/workers/exportWorker.js');
-
-        // Configurar timeout para el worker (30 segundos)
-        const workerTimeout = setTimeout(() => {
-            worker.terminate();
-            throw new Error("Tiempo de espera agotado al generar el Shapefile");
-        }, 30000);
-
-        const result = await new Promise((resolve, reject) => {
-            worker.onmessage = (e) => {
-                clearTimeout(workerTimeout);
-                if (e.data.type === 'done') {
-                    if (!e.data.zip || !(e.data.zip instanceof Uint8Array)) {
-                        reject(new Error("Formato de datos inválido del worker"));
-                        return;
-                    }
-                    resolve(e.data);
-                } else {
-                    reject(new Error(e.data.message || "Error en el worker"));
-                }
-                worker.terminate();
-            };
-
-            worker.onerror = (err) => {
-                clearTimeout(workerTimeout);
-                reject(new Error(`Error en worker: ${err.message}`));
-                worker.terminate();
-            };
-
-            // Enviar datos con opciones
-            worker.postMessage({ 
-                geojson, 
-                layerName: entry.name.replace(/[^\w]/g, '_').slice(0, 50), // Nombre seguro para archivo
-                options: {
-                    encoding: "UTF-8",
-                    maxFieldSize: 254,
-                    strictMode: true,
-                    preserveFieldNames: true,
-                    dateFields: fechaCampos // Informar campos de fecha al worker
-                }
-            });
-        });
-
-        // 7) Validar y preparar el resultado final
-        if (!result?.zip || result.zip.length === 0) {
-            throw new Error("El archivo generado está vacío");
-        }
-
-        // Convertir a Blob con validación
-        let blob;
-        try {
-            blob = new Blob([result.zip], { 
-                type: 'application/zip' 
-            });
-            
-            if (blob.size === 0) {
-                throw new Error("El Blob generado está vacío");
-            }
-        } catch (err) {
-            throw new Error(`Error al crear el archivo ZIP: ${err.message}`);
-        }
-
-        // 8) Logging detallado
-        SCPOLogger.log({
-            timestamp: new Date().toISOString(),
-            user: "Sistema",
-            action: "Export shapefile",
-            info: `Exportado "${name}" como ${entry.name}.zip`,
-            details: {
-                features: validFeatures.length,
-                originalFeatures: arcFeatures.length,
-                skipped: arcFeatures.length - validFeatures.length,
-                fileSize: blob.size,
-                dateFields: fechaCampos,
-                exportOptions: result.metadata
-            }
-        });
-
-        // 9) Descargar el archivo con nombre seguro
-        const safeName = entry.name.replace(/[^\wáéíóúÁÉÍÓÚñÑüÜ\s-]/g, '').trim().slice(0, 100);
-        saveAs(blob, `${safeName || 'export'}.zip`);
-
-        return {
-            success: true,
-            featureCount: validFeatures.length,
-            fileSize: blob.size,
-            fileName: `${safeName || 'export'}.zip`
-        };
-
-    } catch (err) {
-        console.error("Error en exportLayerAsShapefile:", err);
-        
-        SCPOLogger.log({
-            timestamp: new Date().toISOString(),
-            user: "Sistema",
-            action: "Export shapefile - ERROR",
-            info: `Error al exportar "${entry?.name || 'unknown'}"`,
-            error: {
-                name: err.name,
-                message: err.message,
-                stack: err.stack
-            },
-            details: {
-                layerName: entry?.name,
-                fechaCampos: entry?.fechaCampos || []
-            }
-        });
-
-        throw err;
+    // ---------- Helpers para normalizar/validar polígonos ----------
+    function isFiniteNumber(n) {
+      return typeof n === 'number' && isFinite(n);
     }
+
+    function removeConsecutiveDuplicates(ring, eps = 1e-9) {
+      if (!Array.isArray(ring) || ring.length === 0) return [];
+      const out = [ring[0]];
+      for (let i = 1; i < ring.length; i++) {
+        const a = out[out.length - 1];
+        const b = ring[i];
+        if (Math.abs(a[0] - b[0]) > eps || Math.abs(a[1] - b[1]) > eps) {
+          out.push(b);
+        }
+      }
+      return out;
+    }
+
+    function ensureClosed(ring) {
+      if (ring.length === 0) return ring;
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (first[0] !== last[0] || first[1] !== last[1]) {
+        return ring.concat([[first[0], first[1]]]);
+      }
+      return ring;
+    }
+
+    // Área orientada por la fórmula del polígono (shoelace)
+    function ringArea(ring) {
+      if (!Array.isArray(ring) || ring.length < 4) return 0;
+      let sum = 0;
+      for (let i = 0; i < ring.length - 1; i++) {
+        const [x1, y1] = ring[i];
+        const [x2, y2] = ring[i + 1];
+        sum += (x1 * y2 - x2 * y1);
+      }
+      return Math.abs(sum) / 2;
+    }
+
+    function normalizeRing(rawRing) {
+      if (!Array.isArray(rawRing)) return null;
+      // normalizar a pares [x,y] numéricos y filtrar inválidos
+      const cleaned = rawRing
+        .map(pt => {
+          if (!Array.isArray(pt) || pt.length < 2) return null;
+          const x = Number(pt[0]);
+          const y = Number(pt[1]);
+          if (!isFiniteNumber(x) || !isFiniteNumber(y)) return null;
+          return [x, y];
+        })
+        .filter(Boolean);
+
+      if (cleaned.length === 0) return null;
+      // quitar duplicados contiguos
+      let deduped = removeConsecutiveDuplicates(cleaned);
+      if (deduped.length < 3) return null; // no puede ser polígono
+      deduped = ensureClosed(deduped);
+      // asegurar mínimo 4 puntos (incluyendo cierre)
+      if (deduped.length < 4) return null;
+      // comprobar área razonable (> 1e-12 puede ajustarse según escala)
+      const area = ringArea(deduped);
+      if (area <= 1e-12) return null;
+      return deduped;
+    }
+    // ----------------------------------------------------------------
+
+    // 1) Query features con manejo de errores mejorado
+    const q = layer.createQuery();
+    q.where = "1=1";
+    q.returnGeometry = true;
+    q.outFields = ["*"];
+
+    let arcFeatures;
+    try {
+      const result = await layer.queryFeatures(q);
+      arcFeatures = result.features || [];
+      if (arcFeatures.length === 0) {
+        throw new Error("La capa no contiene features para exportar");
+      }
+    } catch (err) {
+      console.error("Error en queryFeatures:", err);
+      throw new Error(`Error al consultar features: ${err.message}`);
+    }
+
+    // 2) Convertir a GeoJSON con validación reforzada y normalización de polígonos
+    const features = arcFeatures.map((f, idx) => {
+      try {
+        if (!f || !f.geometry) return null;
+
+        // Convertir geometría con validación de coordenadas
+        let geom = f.geometry;
+        if (geom.spatialReference?.isWebMercator) {
+          try {
+            geom = webMercatorToGeographic(geom);
+          } catch (err) {
+            console.warn("Error al convertir geometría:", err);
+            return null;
+          }
+        }
+
+        // Validar y normalizar geometría
+        let geometry;
+        switch (geom.type) {
+          case "point": {
+            const x = Number(geom.x);
+            const y = Number(geom.y);
+            if (!isFiniteNumber(x) || !isFiniteNumber(y)) {
+              console.warn(`Feature ${idx} skipped: invalid point coords`, f && f.attributes);
+              return null;
+            }
+            geometry = {
+              type: "Point",
+              coordinates: [x, y]
+            };
+            break;
+          }
+
+          case "polyline": {
+            if (!Array.isArray(geom.paths)) {
+              console.warn(`Feature ${idx} skipped: no paths`, f && f.attributes);
+              return null;
+            }
+            const validPaths = geom.paths
+              .map(path => (Array.isArray(path) ? path.map(pt => [Number(pt[0]), Number(pt[1])]).filter(p => isFiniteNumber(p[0]) && isFiniteNumber(p[1])) : null))
+              .filter(p => Array.isArray(p) && p.length > 0);
+            if (validPaths.length === 0) {
+              console.warn(`Feature ${idx} skipped: no valid paths`, f && f.attributes);
+              return null;
+            }
+            geometry = validPaths.length > 1
+              ? { type: "MultiLineString", coordinates: validPaths }
+              : { type: "LineString", coordinates: validPaths[0] };
+            break;
+          }
+
+          case "polygon": {
+            if (!Array.isArray(geom.rings)) {
+              console.warn(`Feature ${idx} skipped: no rings`, f && f.attributes);
+              return null;
+            }
+
+            const validRings = geom.rings
+              .map(ring => normalizeRing(ring))
+              .filter(Boolean);
+
+            if (validRings.length === 0) {
+              console.warn(`Feature ${idx} skipped: no valid rings after normalization (possible circle with bad ring)`, f && f.attributes);
+              return null;
+            }
+
+            geometry = { type: "Polygon", coordinates: validRings };
+            break;
+          }
+
+          default:
+            console.warn(`Feature ${idx} skipped: unsupported geometry type '${geom.type}'`, f && f.attributes);
+            return null;
+        }
+
+        // Procesar propiedades con manejo seguro de fechas
+        const props = { ...f.attributes };
+        fechaCampos?.forEach(field => {
+          try {
+            const raw = f.attributes[field];
+            if (raw != null && raw !== "") {
+              const d = new Date(raw);
+              if (!isNaN(d.getTime())) {
+                // Enviar el objeto Date al worker (se clona mediante structured clone)
+                props[field] = d;
+              } else {
+                props[field] = null;
+              }
+            } else {
+              props[field] = null;
+            }
+          } catch (err) {
+            console.warn(`Error al procesar campo ${field}:`, err);
+            props[field] = null;
+          }
+        });
+
+        return { type: "Feature", geometry, properties: props };
+      } catch (err) {
+        console.warn("Error al procesar feature:", err, f && f.attributes);
+        return null;
+      }
+    }).filter(Boolean);
+
+    if (features.length === 0) {
+      throw new Error("No se pudo convertir ninguna feature a GeoJSON válido");
+    }
+
+    // 3) Validar y limpiar el GeoJSON (pero mantener Date objetos)
+    const cleanFeatures = features.map(f => {
+      const cleanProps = {};
+      Object.keys(f.properties).forEach(key => {
+        // Mantener Date si existe, sino "" para valores nulos
+        const val = f.properties[key];
+        cleanProps[key] = val != null ? val : "";
+      });
+
+      return {
+        type: "Feature",
+        geometry: f.geometry,
+        properties: cleanProps
+      };
+    });
+
+    const geojson = {
+      type: "FeatureCollection",
+      features: cleanFeatures
+    };
+
+    // 3.5) Inspección final antes de pasar al worker / shpwrite
+    // Detectar geometrías sospechosas
+    const badFeatures = [];
+    const goodFeatures = cleanFeatures.filter((ft, idx) => {
+      if (!ft || !ft.geometry) { badFeatures.push({ idx, reason: 'no-geom' }); return false; }
+      if (ft.geometry.type === 'Polygon') {
+        const rings = ft.geometry.coordinates;
+        if (!Array.isArray(rings) || rings.length === 0) { badFeatures.push({ idx, reason: 'empty-rings' }); return false; }
+        const a = ringArea(rings[0]);
+        if (a <= 1e-12) { badFeatures.push({ idx, reason: 'zero-area' }); return false; }
+      }
+      return true;
+    });
+
+    console.log(`exportLayerAsShapefile: features total=${cleanFeatures.length} good=${goodFeatures.length} bad=${badFeatures.length}`, badFeatures.slice(0, 10));
+
+    if (goodFeatures.length === 0) {
+      throw new Error("Todas las features están inválidas tras normalización (polígonos con rings corruptos)");
+    }
+
+    // 4) Usar Worker con manejo mejorado
+    const worker = new Worker('/workers/exportWorker.js');
+
+    // Configurar timeout para el worker (15 segundos)
+    const workerTimeout = setTimeout(() => {
+      worker.terminate();
+      // No lanzar directamente aquí (se está en timer), en lugar de eso notificamos por reject vía Promise
+    }, 15000);
+
+    const result = await new Promise((resolve, reject) => {
+      const to = setTimeout(() => {
+        worker.terminate();
+        reject(new Error("Tiempo de espera agotado al generar el Shapefile"));
+      }, 15000);
+
+      worker.onmessage = (e) => {
+        clearTimeout(to);
+        if (e.data.type === 'done') {
+          if (!e.data.zip || !(e.data.zip instanceof Uint8Array)) {
+            reject(new Error("Formato de datos inválido del worker"));
+            return;
+          }
+          resolve(e.data);
+        } else {
+          reject(new Error(e.data.message || "Error en el worker"));
+        }
+        worker.terminate();
+      };
+
+      worker.onerror = (err) => {
+        clearTimeout(to);
+        reject(new Error(`Error en worker: ${err.message || err}`));
+        worker.terminate();
+      };
+
+      // Enviar datos con opciones seguras (mandamos solo goodFeatures)
+      const payload = {
+        geojson: { type: "FeatureCollection", features: goodFeatures },
+        layerName: entry.name,
+        options: {
+          encoding: "UTF-8",
+          maxFieldSize: 254,
+          strictMode: true,
+          preserveFieldNames: true // Mantener nombres originales
+        }
+      };
+
+      try {
+        worker.postMessage(payload);
+      } catch (err) {
+        clearTimeout(to);
+        worker.terminate();
+        reject(new Error(`No se pudo postMessage al worker: ${err.message}`));
+      }
+    });
+
+    // 5) Validar y preparar el resultado final
+    if (!result?.zip || result.zip.length === 0) {
+      throw new Error("El archivo generado está vacío");
+    }
+
+    // Convertir a Blob con validación
+    let blob;
+    try {
+      blob = new Blob([result.zip], { type: 'application/zip' });
+      if (blob.size === 0) {
+        throw new Error("El Blob generado está vacío");
+      }
+    } catch (err) {
+      throw new Error(`Error al crear el archivo ZIP: ${err.message}`);
+    }
+
+    // 6) Logging y descarga
+    SCPOLogger.log({
+      timestamp: new Date().toISOString(),
+      user: "Usuario1",
+      action: "Export shapefile",
+      info: `Exportado "${name}" como ${entry.name}.zip (${goodFeatures.length} features, ${blob.size} bytes)`,
+      details: {
+        features: goodFeatures.length,
+        originalFeatures: arcFeatures.length,
+        skipped: arcFeatures.length - goodFeatures.length,
+        badFeaturesSample: badFeatures.slice(0, 5)
+      }
+    });
+
+    // Descargar el archivo
+    saveAs(blob, `${entry.name}.zip`);
+
+  } catch (err) {
+    console.error("Error en exportLayerAsShapefile:", err);
+    SCPOLogger.log({
+      timestamp: new Date().toISOString(),
+      user: "Usuario1",
+      action: "Export shapefile - ERROR",
+      info: `Error al exportar "${entry?.name || 'unknown'}": ${err.message}`,
+      error: {
+        name: err.name,
+        stack: err.stack,
+        message: err.message
+      }
+    });
+    throw err; // Propagar el error para manejo en la UI
+  }
 }
+
 
     const toggleLayerVisibility = (id) => {
         setLayers((prev) =>
