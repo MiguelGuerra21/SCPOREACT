@@ -51,8 +51,7 @@
     "dev": "npm run copy:core && react-scripts start",
     "electron": "electron .",
     "electron-build": "npm run build && electron .",
-    "dist": "electron-builder",
-    "build-worker": "node build-worker.js"
+    "dist": "electron-builder"
   },
   "eslintConfig": {
     "extends": [

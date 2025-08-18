@@ -4,7 +4,6 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import JSZip from "jszip";
 import shpjs from "shpjs";
 import { saveAs } from "file-saver";
-import { webMercatorToGeographic } from "@arcgis/core/geometry/support/webMercatorUtils";
 import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import TopMenu from "./TopMenu";
 import FileLoader from "./FileLoader";
@@ -13,7 +12,7 @@ import SelectedCountBanner from "./SelectedCountBanner";
 import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
-import ExportWorker from "../workers/exportShapefile.worker.js";
+import { createExportWorker } from '../utils/createExportWorker';
 import SCPOLogger from "../utils/SCPOLogger";
 import { COLOR_PALETTE, COLOR_SIN_ESTADO } from "../utils/ColorPalette.jsx";
 
@@ -571,47 +570,6 @@ const AppContainer = () => {
                 return;
             }
 
-            // --- Detectar campos de fecha dinámicamente ---
-            function esFechaValida(val) {
-                // Si el valor es null/undefined
-                if (val == null) return false;
-
-                // Si es un timestamp numérico (como 1753826400000)
-                if (typeof val === 'number') {
-                    // Verificamos que sea un timestamp razonable (entre 1970 y 2100)
-                    const year = new Date(val).getFullYear();
-                    return year >= 1900 && year <= 2100;
-                }
-
-                // Si es instancia de Date
-                if (val instanceof Date) {
-                    return !isNaN(val.getTime()) && val.getFullYear() >= 1900;
-                }
-
-                // Si es string
-                if (typeof val === 'string' && val.trim() !== '') {
-                    const d = new Date(val);
-                    return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
-                }
-
-                // Si es DateTime de Luxon
-                if (val?.isValid && typeof val.isValid === 'function') {
-                    return val.isValid() && val.year >= 1900;
-                }
-
-                // Si es Moment.js
-                if (val?.isValid && typeof val.isValid === 'function' && val?.year) {
-                    return val.isValid() && val.year() >= 1900;
-                }
-
-                // Para cualquier otro objeto con método getTime()
-                if (val?.getTime && typeof val.getTime === 'function') {
-                    const d = new Date(val.getTime());
-                    return !isNaN(d.getTime()) && d.getFullYear() >= 1900;
-                }
-                return false;
-            }
-
             // --- Inicializar sets ---
             const fechaCamposSet = new Set();
             const etapaCamposSet = new Set();
@@ -838,7 +796,10 @@ return Text(Date(v), "DD/MM/YYYY");
                     }]
                 }
             });
-
+            featureLayer.source.on('addfeature', (e) => {
+                const geom = e.feature.getGeometry();
+                if (geom) geom.transform('EPSG:4326', 'EPSG:3857'); // Convierte si es necesario
+            });
             // --- Configurar eventos para esta capa específica ---
             const handleLayerUpdates = () => {
                 setLayers(prev => prev.map(layer => {
@@ -936,7 +897,10 @@ return Text(Date(v), "DD/MM/YYYY");
                         if (!geometry) return null;
 
                         const propsRaw = f.properties || {};
-                        const propsClean = {};
+                        const propsClean = {
+                            fid: f.properties?.fid || f.attributes?.fid || f.id, // Prioriza el fid original
+                            ...propsRaw
+                        };
                         Object.entries(propsRaw).forEach(([key, value]) => {
                             if (value instanceof Date) {
                                 const yr = value.getFullYear();
@@ -1026,349 +990,281 @@ return Text(Date(v), "DD/MM/YYYY");
         }
     };
     //Exportar como shapefile
-async function exportLayerAsShapefile(entry) {
-  try {
-    const { layer, name, fechaCampos } = entry;
+    async function exportLayerAsShapefile(entry, { workerTimeoutMs = 120000 } = {}) {
+        try {
+            const { layer, name, fechaCampos } = entry;
 
-    // ---------- Helpers para normalizar/validar polígonos ----------
-    function isFiniteNumber(n) {
-      return typeof n === 'number' && isFinite(n);
-    }
+            /* ---------- Helper functions (sin cambios respecto a tu versión) ---------- */
+            function isFiniteNumber(n) { return typeof n === 'number' && isFinite(n); }
+            function removeConsecutiveDuplicates(ring, eps = 1e-9) {
+                if (!Array.isArray(ring) || ring.length === 0) return [];
+                const out = [ring[0]];
+                for (let i = 1; i < ring.length; i++) {
+                    const a = out[out.length - 1];
+                    const b = ring[i];
+                    if (Math.abs(a[0] - b[0]) > eps || Math.abs(a[1] - b[1]) > eps) {
+                        out.push(b);
+                    }
+                }
+                return out;
+            }
+            function ensureClosed(ring) {
+                if (ring.length === 0) return ring;
+                const first = ring[0];
+                const last = ring[ring.length - 1];
+                if (first[0] !== last[0] || first[1] !== last[1]) {
+                    return ring.concat([[first[0], first[1]]]);
+                }
+                return ring;
+            }
+            function ringArea(ring) {
+                if (!Array.isArray(ring) || ring.length < 4) return 0;
+                let sum = 0;
+                for (let i = 0; i < ring.length - 1; i++) {
+                    const [x1, y1] = ring[i];
+                    const [x2, y2] = ring[i + 1];
+                    sum += (x1 * y2 - x2 * y1);
+                }
+                return Math.abs(sum) / 2;
+            }
+            function normalizeRing(rawRing) {
+                if (!Array.isArray(rawRing)) return null;
+                const cleaned = rawRing
+                    .map(pt => {
+                        if (!Array.isArray(pt) || pt.length < 2) return null;
+                        const x = Number(pt[0]);
+                        const y = Number(pt[1]);
+                        if (!isFiniteNumber(x) || !isFiniteNumber(y)) return null;
+                        return [x, y];
+                    })
+                    .filter(Boolean);
+                if (cleaned.length === 0) return null;
+                let deduped = removeConsecutiveDuplicates(cleaned);
+                if (deduped.length < 3) return null;
+                deduped = ensureClosed(deduped);
+                if (deduped.length < 4) return null;
+                const area = ringArea(deduped);
+                // Con esto (usa el anillo ya normalizado):
+                if (area <= 1e-12) {
+                    console.warn(`Polígono con área pequeña (${area}) pero se mantiene`, deduped);
+                    return deduped;
+                }
+                return deduped;
+            }
+            /* --------------------------------------------------------------------------- */
 
-    function removeConsecutiveDuplicates(ring, eps = 1e-9) {
-      if (!Array.isArray(ring) || ring.length === 0) return [];
-      const out = [ring[0]];
-      for (let i = 1; i < ring.length; i++) {
-        const a = out[out.length - 1];
-        const b = ring[i];
-        if (Math.abs(a[0] - b[0]) > eps || Math.abs(a[1] - b[1]) > eps) {
-          out.push(b);
+            // 1) Query features
+            const q = layer.createQuery();
+            q.where = "1=1";
+            q.returnGeometry = true;
+            q.outFields = ["*"];
+
+            let arcFeatures;
+            try {
+                const result = await layer.queryFeatures(q);
+                arcFeatures = result.features || [];
+                if (arcFeatures.length === 0) {
+                    throw new Error("La capa no contiene features para exportar");
+                }
+            } catch (err) {
+                console.error("Error en queryFeatures:", err);
+                throw new Error(`Error al consultar features: ${err.message}`);
+            }
+
+            // 2) Convertir a GeoJSON con validación
+            const features = arcFeatures.map((f, idx) => {
+                // Preservar el fid original - CORRECCIÓN: Eliminar la referencia a propsClean
+                const fid = f.attributes.fid || f.attributes.FID || f.attributes.OBJECTID || (idx + 1);
+
+                try {
+                    let geometry = null;
+                    if (f.geometry) {
+                        const geom = f.geometry;
+                        switch (geom.type) {
+                            case "point":
+                                geometry = {
+                                    type: "Point",
+                                    coordinates: [geom.x, geom.y]
+                                };
+                                break;
+                            case "polyline":
+                                geometry = {
+                                    type: "MultiLineString",
+                                    coordinates: geom.paths || [[[0, 0]]]
+                                };
+                                break;
+                            case "polygon":
+                                geometry = {
+                                    type: "Polygon",
+                                    coordinates: geom.rings || [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]
+                                };
+                                break;
+                        }
+                    }
+                    if (!geometry) {
+                        geometry = { type: "Point", coordinates: [0, 0] };
+                    }
+
+                    const props = {
+                        fid: fid,
+                        ...f.attributes
+                    };
+
+                    fechaCampos?.forEach(field => {
+                        const raw = f.attributes[field];
+                        if (raw instanceof Date) {
+                            props[field] = raw.toISOString();
+                        } else if (raw) {
+                            props[field] = new Date(raw).toISOString() || null;
+                        }
+                    });
+
+                    return {
+                        type: "Feature",
+                        id: fid,
+                        geometry,
+                        properties: props
+                    };
+                } catch (err) {
+                    console.warn("Error al procesar feature:", err, f && f.attributes);
+                    return null;
+                }
+            }).filter(Boolean);
+
+            if (features.length === 0) {
+                throw new Error("No se pudo convertir ninguna feature a GeoJSON válido");
+            }
+
+            // 3) Limpiar propiedades - Versión CORREGIDA
+            const cleanFeatures = features.map(f => ({
+                type: "Feature",
+                geometry: f.geometry,
+                properties: Object.fromEntries(
+                    Object.entries(f.properties).map(([key, val]) => [key, val != null ? val : ""])
+                )
+            }));
+
+            // 3.5) Filtrado de buenas/bad features
+            const goodFeatures = cleanFeatures; // Mantiene TODAS las features
+
+            if (goodFeatures.length === 0) throw new Error("Todas las features están inválidas tras normalización (polígonos con rings corruptos)");
+
+            // 4) Crear worker mediante helper empaquetable (module worker + fallback)
+            let worker;
+            try {
+                worker = await createExportWorker();
+            } catch (err) {
+                console.error("No se pudo crear el worker empaquetado:", err);
+                throw new Error(`No se pudo crear el worker: ${err.message}`);
+            }
+
+            // Timeout/Promise para la respuesta del worker
+            // --- Reemplazar por este bloque ---
+            const result = await new Promise((resolve, reject) => {
+                // timeout configurable (workerTimeoutMs viene de la llamada)
+                const timeoutId = setTimeout(() => {
+                    try { worker.terminate(); } catch (_) { }
+                    reject(new Error("Tiempo de espera agotado al generar el Shapefile"));
+                }, workerTimeoutMs);
+
+                // Handle messages from worker. NO cerramos el timeout en mensajes debug/progress.
+                worker.onmessage = (e) => {
+                    const data = e.data;
+                    console.log('[worker msg]', data);
+
+                    switch (data.type) {
+                        case 'debug':
+                            console.log('[worker debug]', data.message, data.data);
+                            break;
+                        case 'done':
+                            clearTimeout(timeoutId);
+                            try { worker.terminate(); } catch (_) { }
+
+                            // Aceptar Uint8Array o ArrayBuffer o TypedArray
+                            let zipBytes = data.zip;
+                            if (zipBytes instanceof ArrayBuffer) {
+                                zipBytes = new Uint8Array(zipBytes);
+                            } else if (ArrayBuffer.isView(zipBytes)) {
+                                zipBytes = new Uint8Array(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
+                            }
+
+                            if (!zipBytes || !(zipBytes instanceof Uint8Array) || zipBytes.length === 0) {
+                                return reject(new Error("Formato de datos inválido del worker: zip missing/invalid"));
+                            }
+
+                            return resolve({ ...data, zip: zipBytes });
+                            break;
+                        case 'error':
+                            console.error('[worker error]', data.message, data.stack);
+                            break;
+                        default:
+                            console.warn('[worker unknown]', data);
+                    }
+                };
+
+
+                worker.onerror = (err) => {
+                    clearTimeout(timeoutId);
+                    try { worker.terminate(); } catch (_) { }
+                    reject(new Error(`Error en worker: ${err?.message || String(err)}`));
+                };
+
+                // Enviar datos al worker
+                try {
+                    worker.postMessage({
+                        geojson: { type: "FeatureCollection", features: goodFeatures },
+                        layerName: entry.name,
+                        options: {
+                            encoding: "UTF-8",
+                            maxFieldSize: 254,
+                            strictMode: true,
+                            preserveFids: true,  // Activar preservación
+                            fidFieldName: 'fid'  // Nombre exacto del campo
+                        }
+                    });
+                } catch (err) {
+                    clearTimeout(timeoutId);
+                    try { worker.terminate(); } catch (_) { }
+                    reject(new Error(`No se pudo postMessage al worker: ${err.message}`));
+                }
+            });
+            // --- fin del bloque ---
+
+
+            // 5) Validar resultado y crear Blob
+            if (!result?.zip || result.zip.length === 0) throw new Error("El archivo generado está vacío");
+
+            let blob;
+            try {
+                blob = new Blob([result.zip], { type: 'application/zip' });
+                if (blob.size === 0) throw new Error("El Blob generado está vacío");
+            } catch (err) {
+                throw new Error(`Error al crear el archivo ZIP: ${err.message}`);
+            }
+
+            // 6) Logging y guardar
+            SCPOLogger.log({
+                timestamp: new Date().toISOString(),
+                user: "Usuario1",
+                action: "Export shapefile",
+                info: `Exportado "${name}" como ${entry.name}.zip (${goodFeatures.length} features, ${blob.size} bytes)`,
+                details: { features: goodFeatures.length, originalFeatures: arcFeatures.length, skipped: arcFeatures.length - goodFeatures.length}
+            });
+
+            saveAs(blob, `${entry.name}.zip`);
+        } catch (err) {
+            console.error("Error en exportLayerAsShapefile:", err);
+            SCPOLogger.log({
+                timestamp: new Date().toISOString(),
+                user: "Usuario1",
+                action: "Export shapefile - ERROR",
+                info: `Error al exportar "${entry?.name || 'unknown'}": ${err.message}`,
+                error: { name: err.name, stack: err.stack, message: err.message }
+            });
+            throw err;
         }
-      }
-      return out;
     }
 
-    function ensureClosed(ring) {
-      if (ring.length === 0) return ring;
-      const first = ring[0];
-      const last = ring[ring.length - 1];
-      if (first[0] !== last[0] || first[1] !== last[1]) {
-        return ring.concat([[first[0], first[1]]]);
-      }
-      return ring;
-    }
-
-    // Área orientada por la fórmula del polígono (shoelace)
-    function ringArea(ring) {
-      if (!Array.isArray(ring) || ring.length < 4) return 0;
-      let sum = 0;
-      for (let i = 0; i < ring.length - 1; i++) {
-        const [x1, y1] = ring[i];
-        const [x2, y2] = ring[i + 1];
-        sum += (x1 * y2 - x2 * y1);
-      }
-      return Math.abs(sum) / 2;
-    }
-
-    function normalizeRing(rawRing) {
-      if (!Array.isArray(rawRing)) return null;
-      // normalizar a pares [x,y] numéricos y filtrar inválidos
-      const cleaned = rawRing
-        .map(pt => {
-          if (!Array.isArray(pt) || pt.length < 2) return null;
-          const x = Number(pt[0]);
-          const y = Number(pt[1]);
-          if (!isFiniteNumber(x) || !isFiniteNumber(y)) return null;
-          return [x, y];
-        })
-        .filter(Boolean);
-
-      if (cleaned.length === 0) return null;
-      // quitar duplicados contiguos
-      let deduped = removeConsecutiveDuplicates(cleaned);
-      if (deduped.length < 3) return null; // no puede ser polígono
-      deduped = ensureClosed(deduped);
-      // asegurar mínimo 4 puntos (incluyendo cierre)
-      if (deduped.length < 4) return null;
-      // comprobar área razonable (> 1e-12 puede ajustarse según escala)
-      const area = ringArea(deduped);
-      if (area <= 1e-12) return null;
-      return deduped;
-    }
-    // ----------------------------------------------------------------
-
-    // 1) Query features con manejo de errores mejorado
-    const q = layer.createQuery();
-    q.where = "1=1";
-    q.returnGeometry = true;
-    q.outFields = ["*"];
-
-    let arcFeatures;
-    try {
-      const result = await layer.queryFeatures(q);
-      arcFeatures = result.features || [];
-      if (arcFeatures.length === 0) {
-        throw new Error("La capa no contiene features para exportar");
-      }
-    } catch (err) {
-      console.error("Error en queryFeatures:", err);
-      throw new Error(`Error al consultar features: ${err.message}`);
-    }
-
-    // 2) Convertir a GeoJSON con validación reforzada y normalización de polígonos
-    const features = arcFeatures.map((f, idx) => {
-      try {
-        if (!f || !f.geometry) return null;
-
-        // Convertir geometría con validación de coordenadas
-        let geom = f.geometry;
-        if (geom.spatialReference?.isWebMercator) {
-          try {
-            geom = webMercatorToGeographic(geom);
-          } catch (err) {
-            console.warn("Error al convertir geometría:", err);
-            return null;
-          }
-        }
-
-        // Validar y normalizar geometría
-        let geometry;
-        switch (geom.type) {
-          case "point": {
-            const x = Number(geom.x);
-            const y = Number(geom.y);
-            if (!isFiniteNumber(x) || !isFiniteNumber(y)) {
-              console.warn(`Feature ${idx} skipped: invalid point coords`, f && f.attributes);
-              return null;
-            }
-            geometry = {
-              type: "Point",
-              coordinates: [x, y]
-            };
-            break;
-          }
-
-          case "polyline": {
-            if (!Array.isArray(geom.paths)) {
-              console.warn(`Feature ${idx} skipped: no paths`, f && f.attributes);
-              return null;
-            }
-            const validPaths = geom.paths
-              .map(path => (Array.isArray(path) ? path.map(pt => [Number(pt[0]), Number(pt[1])]).filter(p => isFiniteNumber(p[0]) && isFiniteNumber(p[1])) : null))
-              .filter(p => Array.isArray(p) && p.length > 0);
-            if (validPaths.length === 0) {
-              console.warn(`Feature ${idx} skipped: no valid paths`, f && f.attributes);
-              return null;
-            }
-            geometry = validPaths.length > 1
-              ? { type: "MultiLineString", coordinates: validPaths }
-              : { type: "LineString", coordinates: validPaths[0] };
-            break;
-          }
-
-          case "polygon": {
-            if (!Array.isArray(geom.rings)) {
-              console.warn(`Feature ${idx} skipped: no rings`, f && f.attributes);
-              return null;
-            }
-
-            const validRings = geom.rings
-              .map(ring => normalizeRing(ring))
-              .filter(Boolean);
-
-            if (validRings.length === 0) {
-              console.warn(`Feature ${idx} skipped: no valid rings after normalization (possible circle with bad ring)`, f && f.attributes);
-              return null;
-            }
-
-            geometry = { type: "Polygon", coordinates: validRings };
-            break;
-          }
-
-          default:
-            console.warn(`Feature ${idx} skipped: unsupported geometry type '${geom.type}'`, f && f.attributes);
-            return null;
-        }
-
-        // Procesar propiedades con manejo seguro de fechas
-        const props = { ...f.attributes };
-        fechaCampos?.forEach(field => {
-          try {
-            const raw = f.attributes[field];
-            if (raw != null && raw !== "") {
-              const d = new Date(raw);
-              if (!isNaN(d.getTime())) {
-                // Enviar el objeto Date al worker (se clona mediante structured clone)
-                props[field] = d;
-              } else {
-                props[field] = null;
-              }
-            } else {
-              props[field] = null;
-            }
-          } catch (err) {
-            console.warn(`Error al procesar campo ${field}:`, err);
-            props[field] = null;
-          }
-        });
-
-        return { type: "Feature", geometry, properties: props };
-      } catch (err) {
-        console.warn("Error al procesar feature:", err, f && f.attributes);
-        return null;
-      }
-    }).filter(Boolean);
-
-    if (features.length === 0) {
-      throw new Error("No se pudo convertir ninguna feature a GeoJSON válido");
-    }
-
-    // 3) Validar y limpiar el GeoJSON (pero mantener Date objetos)
-    const cleanFeatures = features.map(f => {
-      const cleanProps = {};
-      Object.keys(f.properties).forEach(key => {
-        // Mantener Date si existe, sino "" para valores nulos
-        const val = f.properties[key];
-        cleanProps[key] = val != null ? val : "";
-      });
-
-      return {
-        type: "Feature",
-        geometry: f.geometry,
-        properties: cleanProps
-      };
-    });
-
-    const geojson = {
-      type: "FeatureCollection",
-      features: cleanFeatures
-    };
-
-    // 3.5) Inspección final antes de pasar al worker / shpwrite
-    // Detectar geometrías sospechosas
-    const badFeatures = [];
-    const goodFeatures = cleanFeatures.filter((ft, idx) => {
-      if (!ft || !ft.geometry) { badFeatures.push({ idx, reason: 'no-geom' }); return false; }
-      if (ft.geometry.type === 'Polygon') {
-        const rings = ft.geometry.coordinates;
-        if (!Array.isArray(rings) || rings.length === 0) { badFeatures.push({ idx, reason: 'empty-rings' }); return false; }
-        const a = ringArea(rings[0]);
-        if (a <= 1e-12) { badFeatures.push({ idx, reason: 'zero-area' }); return false; }
-      }
-      return true;
-    });
-
-    console.log(`exportLayerAsShapefile: features total=${cleanFeatures.length} good=${goodFeatures.length} bad=${badFeatures.length}`, badFeatures.slice(0, 10));
-
-    if (goodFeatures.length === 0) {
-      throw new Error("Todas las features están inválidas tras normalización (polígonos con rings corruptos)");
-    }
-
-    // 4) Usar Worker con manejo mejorado
-    const worker = new Worker('/workers/exportWorker.js');
-
-    // Configurar timeout para el worker (15 segundos)
-    const workerTimeout = setTimeout(() => {
-      worker.terminate();
-      // No lanzar directamente aquí (se está en timer), en lugar de eso notificamos por reject vía Promise
-    }, 15000);
-
-    const result = await new Promise((resolve, reject) => {
-      const to = setTimeout(() => {
-        worker.terminate();
-        reject(new Error("Tiempo de espera agotado al generar el Shapefile"));
-      }, 15000);
-
-      worker.onmessage = (e) => {
-        clearTimeout(to);
-        if (e.data.type === 'done') {
-          if (!e.data.zip || !(e.data.zip instanceof Uint8Array)) {
-            reject(new Error("Formato de datos inválido del worker"));
-            return;
-          }
-          resolve(e.data);
-        } else {
-          reject(new Error(e.data.message || "Error en el worker"));
-        }
-        worker.terminate();
-      };
-
-      worker.onerror = (err) => {
-        clearTimeout(to);
-        reject(new Error(`Error en worker: ${err.message || err}`));
-        worker.terminate();
-      };
-
-      // Enviar datos con opciones seguras (mandamos solo goodFeatures)
-      const payload = {
-        geojson: { type: "FeatureCollection", features: goodFeatures },
-        layerName: entry.name,
-        options: {
-          encoding: "UTF-8",
-          maxFieldSize: 254,
-          strictMode: true,
-          preserveFieldNames: true // Mantener nombres originales
-        }
-      };
-
-      try {
-        worker.postMessage(payload);
-      } catch (err) {
-        clearTimeout(to);
-        worker.terminate();
-        reject(new Error(`No se pudo postMessage al worker: ${err.message}`));
-      }
-    });
-
-    // 5) Validar y preparar el resultado final
-    if (!result?.zip || result.zip.length === 0) {
-      throw new Error("El archivo generado está vacío");
-    }
-
-    // Convertir a Blob con validación
-    let blob;
-    try {
-      blob = new Blob([result.zip], { type: 'application/zip' });
-      if (blob.size === 0) {
-        throw new Error("El Blob generado está vacío");
-      }
-    } catch (err) {
-      throw new Error(`Error al crear el archivo ZIP: ${err.message}`);
-    }
-
-    // 6) Logging y descarga
-    SCPOLogger.log({
-      timestamp: new Date().toISOString(),
-      user: "Usuario1",
-      action: "Export shapefile",
-      info: `Exportado "${name}" como ${entry.name}.zip (${goodFeatures.length} features, ${blob.size} bytes)`,
-      details: {
-        features: goodFeatures.length,
-        originalFeatures: arcFeatures.length,
-        skipped: arcFeatures.length - goodFeatures.length,
-        badFeaturesSample: badFeatures.slice(0, 5)
-      }
-    });
-
-    // Descargar el archivo
-    saveAs(blob, `${entry.name}.zip`);
-
-  } catch (err) {
-    console.error("Error en exportLayerAsShapefile:", err);
-    SCPOLogger.log({
-      timestamp: new Date().toISOString(),
-      user: "Usuario1",
-      action: "Export shapefile - ERROR",
-      info: `Error al exportar "${entry?.name || 'unknown'}": ${err.message}`,
-      error: {
-        name: err.name,
-        stack: err.stack,
-        message: err.message
-      }
-    });
-    throw err; // Propagar el error para manejo en la UI
-  }
-}
 
 
     const toggleLayerVisibility = (id) => {
