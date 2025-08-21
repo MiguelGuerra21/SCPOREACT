@@ -765,7 +765,7 @@ const AppContainer = () => {
                     reject(new Error(`Error en worker: ${err?.message || String(err)}`));
                 };
 
-                let BACKEND_URL = URLConfig.BACKEND_URL || "https://localhost:3000";
+                let BACKEND_URL = URLConfig.BACKEND_URL || "http://localhost:3000";
                 console.log('BACKEND_URL =', BACKEND_URL);
 
                 try {

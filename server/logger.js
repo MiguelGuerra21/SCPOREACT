@@ -24,4 +24,4 @@ app.post("/api/log", (req, res) => {
   });
 });
 
-app.listen(3001, () => console.log("Logger listening on :3001"));
+app.listen(3001, '0.0.0.0', () => console.log("Logger listening on :3001"));
