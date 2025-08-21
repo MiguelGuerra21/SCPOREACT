@@ -759,14 +759,14 @@ const AppContainer = () => {
                     }
                 };
 
-
                 worker.onerror = (err) => {
                     clearTimeout(timeoutId);
                     try { worker.terminate(); } catch (_) { }
                     reject(new Error(`Error en worker: ${err?.message || String(err)}`));
                 };
 
-                let BACKEND_URL = URLConfig.BACKEND_URL || "http://localhost:3000";
+                let BACKEND_URL = URLConfig.BACKEND_URL || "https://localhost:3000";
+                console.log('BACKEND_URL =', BACKEND_URL);
 
                 try {
                     const mod = await import('../utils/URLConfig'); // <- ajusta ruta según tu proyecto

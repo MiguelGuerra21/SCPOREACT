@@ -4,6 +4,7 @@
   "private": true,
   "proxy": "http://localhost:3000",
   "proxyMobile": "http://100.78.179.248:3000",
+  "proxyMobile2": "http://192.168.1.130:3000",
   "proxyMobileExport": "http://100.78.179.248:3002",
   "main": "public/electron.js",
   "homepage": "./",
