@@ -31,6 +31,7 @@ const MapViewWrapper = ({
   const shiftPressedRef = useRef(false); //estado global de la tecla Shift
   // Detectamos la plataforma (una sola vez)
   const platform = Capacitor.getPlatform();
+  const isAndroid = Capacitor.getPlatform() === 'android';
 
   // Función para cambiar el modo
   const changeMode = (isOnline) => {
@@ -47,7 +48,7 @@ const MapViewWrapper = ({
     if (isOnline) {
       // 1) Asigna el basemap online
       mapRef.current.basemap = Basemap.fromId("streets-navigation-vector");
-      // Solo si no hay capas cargadas, hacemos zoom a España
+      // Solo si no hay capas cargadas, hacemos zoom a Españita
     if (layersRef.current.length === 0) {
       setTimeout(() => {
         viewRef.current.goTo({
@@ -58,10 +59,16 @@ const MapViewWrapper = ({
     }
     } else {
       // Modo offline - cargar mapa blanco
-      const host = window.location.origin;            
-      const publicUrl = process.env.PUBLIC_URL || ""; 
-      const urlTemplate = `${host}${publicUrl}/tiles/blank.png`;
-      
+      const publicUrl = (process.env.PUBLIC_URL || '').replace(/\/$/, '')   ;
+      const isAndroid = Capacitor.getPlatform() === 'android';
+      const urlTemplate = `${publicUrl ? publicUrl + '/' : ''}tiles/blank.png`;
+
+      const lastUrl = isAndroid
+        ? `${publicUrl}/tiles/blank.png`  // En Android (Capacitor WebView) usar ruta relativa
+        : `${window.location.origin}${publicUrl}/tiles/blank.png`; // En navegador usar origin
+
+        console.log("[MapViewWrapper] Modo offline activado, cargando mapa blanco desde:", urlTemplate);
+
       const tileLayer = new WebTileLayer({
         urlTemplate: urlTemplate,
         subDomains: [],

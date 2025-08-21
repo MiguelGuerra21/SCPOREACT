@@ -1,5 +1,3 @@
-// src/components/AppContainer.jsx
-
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import JSZip from "jszip";
 import shpjs from "shpjs";
@@ -12,9 +10,10 @@ import SelectedCountBanner from "./SelectedCountBanner";
 import LoadingOverlay from "./LoadingOverlay";
 import ExportModal from "./ExportModal";
 import BatchEditModal from "./BatchEditModal";
-import { createExportWorker } from '../utils/createExportWorker';
+import { createExportWorker } from '../workers/createExportWorker';
 import SCPOLogger from "../utils/SCPOLogger";
 import { COLOR_PALETTE, COLOR_SIN_ESTADO } from "../utils/ColorPalette.jsx";
+import URLConfig from "../utils/URLConfig"; // Importa la configuración de URLs
 
 
 
@@ -472,7 +471,384 @@ const AppContainer = () => {
                 return null;
         }
     };
+    async function toArrayBuffer(file) {
+        if (!file) throw new Error("No file provided to toArrayBuffer");
+        if (typeof file.arrayBuffer === "function") {
+            try {
+                return await file.arrayBuffer();
+            } catch (err) {
+                console.warn("file.arrayBuffer() falló, usando FileReader fallback:", err);
+            }
+        }
+        return await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = (e) => reject(e);
+            reader.readAsArrayBuffer(file);
+        });
+    }
+    function uint8ToBase64(u8) {
+        let CHUNK_SIZE = 0x8000;
+        let index = 0;
+        let result = '';
+        while (index < u8.length) {
+            const chunk = u8.subarray(index, Math.min(index + CHUNK_SIZE, u8.length));
+            result += String.fromCharCode.apply(null, chunk);
+            index += CHUNK_SIZE;
+        }
+        return btoa(result);
+    }
+    async function saveZipUniversal(zipUint8Array, filename = "export.zip") {
+        // Helper: uint8 -> base64 (ya tienes uint8ToBase64)
+        // 1) Capacitor environment (prefer write + share)
+        try {
+            if (window.Capacitor && typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() !== 'web') {
+                const base64 = uint8ToBase64(zipUint8Array);
 
+                // importar Filesystem de forma dinámica para evitar errores en web
+                const { Filesystem, Directory } = await import('@capacitor/filesystem');
+
+                // Escribir en el directorio de Documents (interno de la app)
+                const writeRes = await Filesystem.writeFile({
+                    path: `exports/${filename}`,
+                    data: base64,
+                    directory: Directory.Documents,
+                    recursive: true
+                });
+
+                // Intentar importar Share; si no está instalado, simplemente devolvemos la ruta
+                let Share = null;
+                try {
+                    const mod = await import('@capacitor/share');
+                    Share = mod.Share || mod.default || null;
+                } catch (err) {
+                    // plugin no instalado o plataforma no soportada
+                    console.warn('Capacitor Share no disponible:', err?.message || err);
+                }
+
+                const fileUri = writeRes.uri || writeRes.path || null; // distintas versiones de Capacitor devuelven claves distintas
+                // En Android suele venir en writeRes.uri (file://...)
+                if (Share && fileUri) {
+                    try {
+                        await Share.share({ title: filename, text: filename, url: fileUri });
+                        return { success: true, path: fileUri };
+                    } catch (e) {
+                        console.warn('Share falló, archivo guardado en:', fileUri, e);
+                        return { success: true, path: fileUri };
+                    }
+                }
+
+                // Si Share no disponible, devolvemos la ruta donde se guardó
+                return { success: true, path: fileUri };
+            }
+        } catch (err) {
+            console.warn("Capacitor save fallback falló:", err);
+            // continuar a web fallback
+        }
+
+        // 2) Web / Electron: try file-saver
+        try {
+            const blob = new Blob([zipUint8Array], { type: "application/zip" });
+            saveAs(blob, filename);
+            return { success: true };
+        } catch (err) {
+            console.warn("saveAs falló:", err);
+        }
+
+        // 3) fallback abrir en nueva pestaña
+        try {
+            const blob = new Blob([zipUint8Array], { type: "application/zip" });
+            const url = URL.createObjectURL(blob);
+            window.open(url, "_blank");
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+            return { success: true, url };
+        } catch (e) {
+            console.error("No se pudo guardar el archivo:", e);
+            return { success: false, error: e.message || String(e) };
+        }
+    }
+    async function safeCreateExportWorker() {
+        // 1) intenta la factory empaquetada (si existe)
+        try {
+            const w = await createExportWorker();
+            console.log("createExportWorker() ok");
+            return w;
+        } catch (err) {
+            console.warn("createExportWorker() falló:", err);
+        }
+
+        // 2) intenta worker estático en /export-worker.js (must be added to public)
+        try {
+            const w = new Worker('/export-worker.js'); // NO 'module' para máxima compatibilidad en WebView
+            console.log("Worker('/export-worker.js') creado correctamente");
+            return w;
+        } catch (err) {
+            console.warn("new Worker('/export-worker.js') falló:", err);
+        }
+
+        // 3) fallback "fake" que devuelve error controlado (no bloqueará el hilo con algo pesado)
+        const fake = {
+            onmessage: null,
+            onerror: null,
+            postMessage(payload) {
+                console.error("No hay worker disponible en este entorno. Mensaje recibido:", payload);
+                setTimeout(() => {
+                    if (fake.onmessage) fake.onmessage({ data: { type: 'error', message: 'No worker available - fallback failed' } });
+                }, 0);
+            },
+            terminate() { /* noop */ }
+        };
+        return fake;
+    }
+    //Exportar como shapefile
+    async function exportLayerAsShapefile(entry, { workerTimeoutMs = 60000 } = {}) {
+        try {
+            const { layer, name, fechaCampos } = entry;
+
+            /* --------------------------------------------------------------------------- */
+
+            // 1) Query features
+            const q = layer.createQuery();
+            q.where = "1=1";
+            q.returnGeometry = true;
+            q.outFields = ["*"];
+
+            let arcFeatures;
+            try {
+                const result = await layer.queryFeatures(q);
+                arcFeatures = result.features || [];
+                if (arcFeatures.length === 0) {
+                    throw new Error("La capa no contiene features para exportar");
+                }
+            } catch (err) {
+                console.error("Error en queryFeatures:", err);
+                throw new Error(`Error al consultar features: ${err.message}`);
+            }
+
+            // 2) Convertir a GeoJSON con validación
+            const features = arcFeatures.map((f, idx) => {
+                // Preservar el fid original - CORRECCIÓN: Eliminar la referencia a propsClean
+                const fid = f.attributes.fid || f.attributes.FID || f.attributes.OBJECTID || (idx + 1);
+
+                try {
+                    let geometry = null;
+                    if (f.geometry) {
+                        const geom = f.geometry;
+                        switch (geom.type) {
+                            case "point":
+                                geometry = {
+                                    type: "Point",
+                                    coordinates: [geom.x, geom.y]
+                                };
+                                break;
+                            case "polyline":
+                                geometry = {
+                                    type: "MultiLineString",
+                                    coordinates: geom.paths || [[[0, 0]]]
+                                };
+                                break;
+                            case "polygon":
+                                geometry = {
+                                    type: "Polygon",
+                                    coordinates: geom.rings || [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]
+                                };
+                                break;
+                        }
+                    }
+                    if (!geometry) {
+                        geometry = { type: "Point", coordinates: [0, 0] };
+                    }
+
+                    const props = {
+                        fid: fid,
+                        ...f.attributes
+                    };
+
+                    fechaCampos?.forEach(field => {
+                        const raw = f.attributes[field];
+                        if (raw instanceof Date) {
+                            props[field] = raw.toISOString();
+                        } else if (raw) {
+                            props[field] = new Date(raw).toISOString() || null;
+                        }
+                    });
+
+                    return {
+                        type: "Feature",
+                        id: fid,
+                        geometry,
+                        properties: props
+                    };
+                } catch (err) {
+                    console.warn("Error al procesar feature:", err, f && f.attributes);
+                    return null;
+                }
+            }).filter(Boolean);
+
+            if (features.length === 0) {
+                throw new Error("No se pudo convertir ninguna feature a GeoJSON válido");
+            }
+
+            // 3) Limpiar propiedades - Versión CORREGIDA
+            const cleanFeatures = features.map(f => ({
+                type: "Feature",
+                geometry: f.geometry,
+                properties: Object.fromEntries(
+                    Object.entries(f.properties).map(([key, val]) => [key, val != null ? val : ""])
+                )
+            }));
+
+            // 3.5) Filtrado de buenas/bad features
+            const goodFeatures = cleanFeatures; // Mantiene TODAS las features
+
+            if (goodFeatures.length === 0) throw new Error("Todas las features están inválidas tras normalización (polígonos con rings corruptos)");
+
+            // 4) Crear worker mediante helper empaquetable (module worker + fallback)
+            let worker;
+            try {
+                worker = await safeCreateExportWorker();
+            } catch (err) {
+                console.error("No se pudo obtener un worker:", err);
+                throw err;
+            }
+
+            // Timeout/Promise para la respuesta del worker
+            // --- Reemplazar por este bloque ---
+            const result = await new Promise(async (resolve, reject) => {
+                // timeout configurable (workerTimeoutMs viene de la llamada)
+                const timeoutId = setTimeout(() => {
+                    try { worker.terminate(); } catch (_) { }
+                    reject(new Error("Tiempo de espera agotado al generar el Shapefile"));
+                }, workerTimeoutMs);
+
+                // Handle messages from worker. NO cerramos el timeout en mensajes debug/progress.
+                worker.onmessage = (e) => {
+                    const data = e.data;
+                    console.log('[worker msg]', data);
+                    if (data?.type === 'error') {
+                        console.error('worker reported error:', data.message, data.stack);
+                    }
+
+                    switch (data.type) {
+                        case 'debug':
+                            console.log('[worker debug]', data.message, data.data);
+                            break;
+                        case 'done':
+                            clearTimeout(timeoutId);
+                            try { worker.terminate(); } catch (_) { }
+
+                            // Aceptar Uint8Array o ArrayBuffer o TypedArray
+                            let zipBytes = data.zip;
+                            if (zipBytes instanceof ArrayBuffer) {
+                                zipBytes = new Uint8Array(zipBytes);
+                            } else if (ArrayBuffer.isView(zipBytes)) {
+                                zipBytes = new Uint8Array(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
+                            }
+
+                            if (!zipBytes || !(zipBytes instanceof Uint8Array) || zipBytes.length === 0) {
+                                return reject(new Error("Formato de datos inválido del worker: zip missing/invalid"));
+                            }
+
+                            return resolve({ ...data, zip: zipBytes });
+                            break;
+                        case 'error':
+                            console.error('[worker error]', data.message, data.stack);
+                            break;
+                        default:
+                            console.warn('[worker unknown]', data);
+                    }
+                };
+
+
+                worker.onerror = (err) => {
+                    clearTimeout(timeoutId);
+                    try { worker.terminate(); } catch (_) { }
+                    reject(new Error(`Error en worker: ${err?.message || String(err)}`));
+                };
+
+                let BACKEND_URL = URLConfig.BACKEND_URL || "http://localhost:3000";
+
+                try {
+                    const mod = await import('../utils/URLConfig'); // <- ajusta ruta según tu proyecto
+                    // puede exportar como named o default, así que comprobamos ambos
+                    BACKEND_URL = mod.BACKEND_URL ?? mod.default?.BACKEND_URL ?? mod.default ?? null;
+                } catch (err) {
+                    console.warn('[export] No se pudo cargar URLConfig dinámicamente:', err);
+                }
+
+                // logs
+                console.log('[export] usando BACKEND_URL =', BACKEND_URL);
+
+                // Enviar datos al worker
+                try {
+                    worker.postMessage({
+                        geojson: { type: "FeatureCollection", features: goodFeatures },
+                        layerName: entry.name,
+                        backendUrl: URLConfig.BACKEND_URL, // URL del backend para el worker
+                        options: {
+                            encoding: "UTF-8",
+                            maxFieldSize: 254,
+                            strictMode: true,
+                            preserveFids: true,  // Activar preservación
+                            fidFieldName: 'fid'  // Nombre exacto del campo
+                        }
+                    });
+                } catch (err) {
+                    clearTimeout(timeoutId);
+                    try { worker.terminate(); } catch (_) { }
+                    reject(new Error(`No se pudo postMessage al worker: ${err.message}`));
+                }
+            });
+            // --- fin del bloque ---
+
+
+            // 5) Validar resultado y crear Blob
+            if (!result?.zip || result.zip.length === 0) throw new Error("El archivo generado está vacío");
+
+            let blob;
+            try {
+                blob = new Blob([result.zip], { type: 'application/zip' });
+                if (blob.size === 0) throw new Error("El Blob generado está vacío");
+            } catch (err) {
+                throw new Error(`Error al crear el archivo ZIP: ${err.message}`);
+            }
+
+            // 6) Logging y guardar
+            SCPOLogger.log({
+                timestamp: new Date().toISOString(),
+                user: "Usuario1",
+                action: "Export shapefile",
+                info: `Exportado "${name}" como ${entry.name}.zip (${goodFeatures.length} features, ${blob.size} bytes)`,
+                details: { features: goodFeatures.length, originalFeatures: arcFeatures.length, skipped: arcFeatures.length - goodFeatures.length }
+            });
+
+            //saveAs(blob, `${entry.name}.zip`);
+            await saveZipUniversal(result.zip, `${entry.name}.zip`);
+        } catch (err) {
+            console.error("Error en exportLayerAsShapefile:", err);
+            SCPOLogger.log({
+                timestamp: new Date().toISOString(),
+                user: "Usuario1",
+                action: "Export shapefile - ERROR",
+                info: `Error al exportar "${entry?.name || 'unknown'}": ${err.message}`,
+                error: { name: err.name, stack: err.stack, message: err.message }
+            });
+            throw err;
+        }
+    }
+
+    function toArrayBuffer(file) {
+        // Some Android WebViews don't provide file.arrayBuffer()
+        if (file.arrayBuffer && typeof file.arrayBuffer === 'function') {
+            return file.arrayBuffer();
+        }
+        return new Promise((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onerror = () => { fr.abort(); reject(new Error('FileReader error')); };
+            fr.onload = () => resolve(fr.result);
+            fr.readAsArrayBuffer(file);
+        });
+    }
     //Abrir un archivo
     const handleFileOpen = async (file) => {
 
@@ -527,8 +903,10 @@ const AppContainer = () => {
         try {
             //Procesamiento inicial del archivo
             setLoadingMessage("Descomprimiendo archivo ZIP");
-            const arrayBuffer = await file.arrayBuffer();
+            //const arrayBuffer = await file.arrayBuffer(); version original
+            const arrayBuffer = await toArrayBuffer(file);
             const zip = await JSZip.loadAsync(arrayBuffer);
+
 
             // Leer encoding de .cpg (o UTF-8 por defecto)
             let encoding = "UTF-8";
@@ -537,6 +915,8 @@ const AppContainer = () => {
                 const txt = (await zip.file(cpgEntry).async("string")).trim();
                 encoding = txt || encoding;
             }
+
+
 
             // Parsear con shpjs
             const geojson = await shpjs(arrayBuffer, { encoding });
@@ -989,282 +1369,6 @@ return Text(Date(v), "DD/MM/YYYY");
             setLoadingMessage("");
         }
     };
-    //Exportar como shapefile
-    async function exportLayerAsShapefile(entry, { workerTimeoutMs = 120000 } = {}) {
-        try {
-            const { layer, name, fechaCampos } = entry;
-
-            /* ---------- Helper functions (sin cambios respecto a tu versión) ---------- */
-            function isFiniteNumber(n) { return typeof n === 'number' && isFinite(n); }
-            function removeConsecutiveDuplicates(ring, eps = 1e-9) {
-                if (!Array.isArray(ring) || ring.length === 0) return [];
-                const out = [ring[0]];
-                for (let i = 1; i < ring.length; i++) {
-                    const a = out[out.length - 1];
-                    const b = ring[i];
-                    if (Math.abs(a[0] - b[0]) > eps || Math.abs(a[1] - b[1]) > eps) {
-                        out.push(b);
-                    }
-                }
-                return out;
-            }
-            function ensureClosed(ring) {
-                if (ring.length === 0) return ring;
-                const first = ring[0];
-                const last = ring[ring.length - 1];
-                if (first[0] !== last[0] || first[1] !== last[1]) {
-                    return ring.concat([[first[0], first[1]]]);
-                }
-                return ring;
-            }
-            function ringArea(ring) {
-                if (!Array.isArray(ring) || ring.length < 4) return 0;
-                let sum = 0;
-                for (let i = 0; i < ring.length - 1; i++) {
-                    const [x1, y1] = ring[i];
-                    const [x2, y2] = ring[i + 1];
-                    sum += (x1 * y2 - x2 * y1);
-                }
-                return Math.abs(sum) / 2;
-            }
-            function normalizeRing(rawRing) {
-                if (!Array.isArray(rawRing)) return null;
-                const cleaned = rawRing
-                    .map(pt => {
-                        if (!Array.isArray(pt) || pt.length < 2) return null;
-                        const x = Number(pt[0]);
-                        const y = Number(pt[1]);
-                        if (!isFiniteNumber(x) || !isFiniteNumber(y)) return null;
-                        return [x, y];
-                    })
-                    .filter(Boolean);
-                if (cleaned.length === 0) return null;
-                let deduped = removeConsecutiveDuplicates(cleaned);
-                if (deduped.length < 3) return null;
-                deduped = ensureClosed(deduped);
-                if (deduped.length < 4) return null;
-                const area = ringArea(deduped);
-                // Con esto (usa el anillo ya normalizado):
-                if (area <= 1e-12) {
-                    console.warn(`Polígono con área pequeña (${area}) pero se mantiene`, deduped);
-                    return deduped;
-                }
-                return deduped;
-            }
-            /* --------------------------------------------------------------------------- */
-
-            // 1) Query features
-            const q = layer.createQuery();
-            q.where = "1=1";
-            q.returnGeometry = true;
-            q.outFields = ["*"];
-
-            let arcFeatures;
-            try {
-                const result = await layer.queryFeatures(q);
-                arcFeatures = result.features || [];
-                if (arcFeatures.length === 0) {
-                    throw new Error("La capa no contiene features para exportar");
-                }
-            } catch (err) {
-                console.error("Error en queryFeatures:", err);
-                throw new Error(`Error al consultar features: ${err.message}`);
-            }
-
-            // 2) Convertir a GeoJSON con validación
-            const features = arcFeatures.map((f, idx) => {
-                // Preservar el fid original - CORRECCIÓN: Eliminar la referencia a propsClean
-                const fid = f.attributes.fid || f.attributes.FID || f.attributes.OBJECTID || (idx + 1);
-
-                try {
-                    let geometry = null;
-                    if (f.geometry) {
-                        const geom = f.geometry;
-                        switch (geom.type) {
-                            case "point":
-                                geometry = {
-                                    type: "Point",
-                                    coordinates: [geom.x, geom.y]
-                                };
-                                break;
-                            case "polyline":
-                                geometry = {
-                                    type: "MultiLineString",
-                                    coordinates: geom.paths || [[[0, 0]]]
-                                };
-                                break;
-                            case "polygon":
-                                geometry = {
-                                    type: "Polygon",
-                                    coordinates: geom.rings || [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]]
-                                };
-                                break;
-                        }
-                    }
-                    if (!geometry) {
-                        geometry = { type: "Point", coordinates: [0, 0] };
-                    }
-
-                    const props = {
-                        fid: fid,
-                        ...f.attributes
-                    };
-
-                    fechaCampos?.forEach(field => {
-                        const raw = f.attributes[field];
-                        if (raw instanceof Date) {
-                            props[field] = raw.toISOString();
-                        } else if (raw) {
-                            props[field] = new Date(raw).toISOString() || null;
-                        }
-                    });
-
-                    return {
-                        type: "Feature",
-                        id: fid,
-                        geometry,
-                        properties: props
-                    };
-                } catch (err) {
-                    console.warn("Error al procesar feature:", err, f && f.attributes);
-                    return null;
-                }
-            }).filter(Boolean);
-
-            if (features.length === 0) {
-                throw new Error("No se pudo convertir ninguna feature a GeoJSON válido");
-            }
-
-            // 3) Limpiar propiedades - Versión CORREGIDA
-            const cleanFeatures = features.map(f => ({
-                type: "Feature",
-                geometry: f.geometry,
-                properties: Object.fromEntries(
-                    Object.entries(f.properties).map(([key, val]) => [key, val != null ? val : ""])
-                )
-            }));
-
-            // 3.5) Filtrado de buenas/bad features
-            const goodFeatures = cleanFeatures; // Mantiene TODAS las features
-
-            if (goodFeatures.length === 0) throw new Error("Todas las features están inválidas tras normalización (polígonos con rings corruptos)");
-
-            // 4) Crear worker mediante helper empaquetable (module worker + fallback)
-            let worker;
-            try {
-                worker = await createExportWorker();
-            } catch (err) {
-                console.error("No se pudo crear el worker empaquetado:", err);
-                throw new Error(`No se pudo crear el worker: ${err.message}`);
-            }
-
-            // Timeout/Promise para la respuesta del worker
-            // --- Reemplazar por este bloque ---
-            const result = await new Promise((resolve, reject) => {
-                // timeout configurable (workerTimeoutMs viene de la llamada)
-                const timeoutId = setTimeout(() => {
-                    try { worker.terminate(); } catch (_) { }
-                    reject(new Error("Tiempo de espera agotado al generar el Shapefile"));
-                }, workerTimeoutMs);
-
-                // Handle messages from worker. NO cerramos el timeout en mensajes debug/progress.
-                worker.onmessage = (e) => {
-                    const data = e.data;
-                    console.log('[worker msg]', data);
-
-                    switch (data.type) {
-                        case 'debug':
-                            console.log('[worker debug]', data.message, data.data);
-                            break;
-                        case 'done':
-                            clearTimeout(timeoutId);
-                            try { worker.terminate(); } catch (_) { }
-
-                            // Aceptar Uint8Array o ArrayBuffer o TypedArray
-                            let zipBytes = data.zip;
-                            if (zipBytes instanceof ArrayBuffer) {
-                                zipBytes = new Uint8Array(zipBytes);
-                            } else if (ArrayBuffer.isView(zipBytes)) {
-                                zipBytes = new Uint8Array(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
-                            }
-
-                            if (!zipBytes || !(zipBytes instanceof Uint8Array) || zipBytes.length === 0) {
-                                return reject(new Error("Formato de datos inválido del worker: zip missing/invalid"));
-                            }
-
-                            return resolve({ ...data, zip: zipBytes });
-                            break;
-                        case 'error':
-                            console.error('[worker error]', data.message, data.stack);
-                            break;
-                        default:
-                            console.warn('[worker unknown]', data);
-                    }
-                };
-
-
-                worker.onerror = (err) => {
-                    clearTimeout(timeoutId);
-                    try { worker.terminate(); } catch (_) { }
-                    reject(new Error(`Error en worker: ${err?.message || String(err)}`));
-                };
-
-                // Enviar datos al worker
-                try {
-                    worker.postMessage({
-                        geojson: { type: "FeatureCollection", features: goodFeatures },
-                        layerName: entry.name,
-                        options: {
-                            encoding: "UTF-8",
-                            maxFieldSize: 254,
-                            strictMode: true,
-                            preserveFids: true,  // Activar preservación
-                            fidFieldName: 'fid'  // Nombre exacto del campo
-                        }
-                    });
-                } catch (err) {
-                    clearTimeout(timeoutId);
-                    try { worker.terminate(); } catch (_) { }
-                    reject(new Error(`No se pudo postMessage al worker: ${err.message}`));
-                }
-            });
-            // --- fin del bloque ---
-
-
-            // 5) Validar resultado y crear Blob
-            if (!result?.zip || result.zip.length === 0) throw new Error("El archivo generado está vacío");
-
-            let blob;
-            try {
-                blob = new Blob([result.zip], { type: 'application/zip' });
-                if (blob.size === 0) throw new Error("El Blob generado está vacío");
-            } catch (err) {
-                throw new Error(`Error al crear el archivo ZIP: ${err.message}`);
-            }
-
-            // 6) Logging y guardar
-            SCPOLogger.log({
-                timestamp: new Date().toISOString(),
-                user: "Usuario1",
-                action: "Export shapefile",
-                info: `Exportado "${name}" como ${entry.name}.zip (${goodFeatures.length} features, ${blob.size} bytes)`,
-                details: { features: goodFeatures.length, originalFeatures: arcFeatures.length, skipped: arcFeatures.length - goodFeatures.length}
-            });
-
-            saveAs(blob, `${entry.name}.zip`);
-        } catch (err) {
-            console.error("Error en exportLayerAsShapefile:", err);
-            SCPOLogger.log({
-                timestamp: new Date().toISOString(),
-                user: "Usuario1",
-                action: "Export shapefile - ERROR",
-                info: `Error al exportar "${entry?.name || 'unknown'}": ${err.message}`,
-                error: { name: err.name, stack: err.stack, message: err.message }
-            });
-            throw err;
-        }
-    }
-
 
 
     const toggleLayerVisibility = (id) => {

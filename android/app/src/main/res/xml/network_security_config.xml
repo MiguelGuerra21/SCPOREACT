@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+  <domain-config cleartextTrafficPermitted="true">
+    <!-- Permite la IP concreta de tu backend local -->
+    <domain includeSubdomains="false">100.78.179.248</domain>
+  </domain-config>
+
+  <!-- Opcional: permitir cleartext global en debug -->
+  <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
