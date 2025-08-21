@@ -1,18 +1,53 @@
 // src/utils/createExportWorker.js
 export async function createExportWorker() {
+  const isElectron = window && window.process && window.process.type;
+  console.log('Creating worker. Electron detected:', isElectron);
+  
   try {
-    // Intento moderno: module worker transformado por bundler (Webpack5 / Vite)
-    return new Worker(new URL('../workers/exportWorker.js', import.meta.url), { type: 'module' });
+    if (isElectron) {
+      console.log('Creating Electron worker...');
+      // En Electron, usar diferentes rutas según el entorno
+      const workerPath = process.env.NODE_ENV === 'production' 
+        ? './workers/exportWorker.js'
+        : '../src/workers/exportWorker.js';
+      
+      console.log('Worker path:', workerPath);
+      const worker = new Worker(workerPath);
+      console.log('Electron worker created successfully');
+      return worker;
+    } else {
+      console.log('Creating browser worker...');
+      // En navegador normal
+      const worker = new Worker(new URL('../workers/exportWorker.js', import.meta.url));
+      console.log('Browser worker created successfully');
+      return worker;
+    }
   } catch (err) {
-    // Fallback: crear worker desde blob (carga el archivo como texto)
-    // Esto requiere que el bundler ponga el archivo worker en los assets (por ejemplo, Vite/Webpack ocurre).
+    console.error('Primary worker creation failed:', err);
+    
+    // Fallback: crear worker desde blob
     try {
-      const resp = await fetch(new URL('../workers/exportWorker.js', import.meta.url));
+      console.log('Trying blob fallback...');
+      let workerUrl;
+      
+      if (isElectron) {
+        workerUrl = process.env.NODE_ENV === 'production' 
+          ? './workers/exportWorker.js'
+          : '../src/workers/exportWorker.js';
+      } else {
+        workerUrl = new URL('../workers/exportWorker.js', import.meta.url);
+      }
+      
+      console.log('Fetching worker from:', workerUrl);
+      const resp = await fetch(workerUrl);
       const text = await resp.text();
       const blob = new Blob([text], { type: 'application/javascript' });
-      return new Worker(URL.createObjectURL(blob));
+      const worker = new Worker(URL.createObjectURL(blob));
+      console.log('Blob worker created successfully');
+      return worker;
     } catch (fetchErr) {
-      throw new Error(`Failed to create worker (both module and blob fallback failed): ${fetchErr.message}`);
+      console.error('All worker creation methods failed:', fetchErr);
+      throw new Error(`Failed to create worker: ${fetchErr.message}`);
     }
   }
 }

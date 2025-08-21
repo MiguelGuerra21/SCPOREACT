@@ -78,7 +78,9 @@
     "@craco/craco": "^7.1.0",
     "buffer": "^6.0.3",
     "concurrently": "^9.2.0",
+    "copy-webpack-plugin": "^13.0.1",
     "cpx": "^1.5.0",
+    "cross-env": "^10.0.0",
     "electron": "^37.1.0",
     "electron-builder": "^26.0.12",
     "esbuild": "^0.25.8",
@@ -93,16 +95,33 @@
     "worker-loader": "^3.0.8"
   },
   "build": {
-    "appId": "com.reactshapefilearcgis.app",
-    "files": [
-      "build/**/*",
-      "node_modules/**/*"
-    ],
+    "appId": "com.IsasturSCPO.app",
+    "executableName": "SCPO",
+    "productName": "SCPO",
     "directories": {
+      "output": "dist",
       "buildResources": "assets"
     },
+    "files": [
+      "build/**/*",
+      "public/electron.js",
+      "node_modules/**/*"
+    ],
     "asarUnpack": [
       "electron/**/*"
-    ]
+    ],
+    "extraResources": [
+      {
+        "from": "assets/",
+        "to": "assets",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "assets/logo.ico",
+      "target": "nsis"
+    }
   }
 }

@@ -2,17 +2,99 @@
 /* eslint-disable no-restricted-globals */
 /* eslint-disable no-undef */
 /* eslint-disable no-console */
-/* global JSZip, shpwrite */
 
-importScripts('/libs/shpwrite.js','/libs/jszip.js');
+// ===== SOLUCIÓN OFFLINE PARA WORKERS =====
+function loadLibrariesOffline() {
+  console.log('Worker: Loading libraries in offline mode...');
+  
+  // En workers, solo tenemos 'self' y 'globalThis'
+  const global = typeof self !== 'undefined' ? self : globalThis;
+  
+  // Verificar si las librerías ya están cargadas
+  if (typeof global.JSZip !== 'undefined' && typeof global.shpwrite !== 'undefined') {
+    console.log('Worker: ✅ Libraries already available');
+    return true;
+  }
+  
+  // Lista de posibles ubicaciones globales en workers
+  const globalLocations = [
+    { JSZip: global.JSZip, shpwrite: global.shpwrite },
+    { JSZip: this?.JSZip, shpwrite: this?.shpwrite }
+  ];
+  
+  // Buscar en las ubicaciones globales
+  for (const location of globalLocations) {
+    if (location.JSZip && location.shpwrite) {
+      global.JSZip = location.JSZip;
+      global.shpwrite = location.shpwrite;
+      console.log('Worker: ✅ Libraries found in global scope');
+      return true;
+    }
+  }
+  
+  // Si no están globalmente, intentar cargarlas con importScripts
+  const libPaths = [
+    '../libs/jszip.js',
+    '../libs/shpwrite.js',
+    './libs/jszip.js', 
+    './libs/shpwrite.js',
+    '/libs/jszip.js',
+    '/libs/shpwrite.js'
+  ];
+  
+  let loaded = false;
+  
+  for (let i = 0; i < libPaths.length; i += 2) {
+    try {
+      importScripts(libPaths[i], libPaths[i + 1]);
+      
+      // Después de importar, verificar y asignar
+      if (typeof JSZip !== 'undefined') global.JSZip = JSZip;
+      if (typeof shpwrite !== 'undefined') global.shpwrite = shpwrite;
+      
+      if (global.JSZip && global.shpwrite) {
+        console.log('Worker: ✅ Libraries loaded from:', libPaths[i]);
+        loaded = true;
+        break;
+      }
+    } catch (error) {
+      console.warn('Worker: Failed to load from', libPaths[i], error.message);
+      continue;
+    }
+  }
+  
+  return loaded;
+}
 
-/* ---------- Helper debug para enviar mensajes al hilo principal ---------- */
+// Inicialización offline
+try {
+  const success = loadLibrariesOffline();
+  
+  if (!success) {
+    throw new Error('Could not load libraries in offline mode');
+  }
+  
+  console.log('Worker: ✅ Offline initialization successful');
+  console.log('Worker: JSZip:', typeof self.JSZip);
+  console.log('Worker: shpwrite:', typeof self.shpwrite);
+  
+} catch (error) {
+  console.error('Worker: ❌ Offline initialization failed:', error);
+  self.postMessage({
+    type: 'error',
+    message: `Offline initialization failed: ${error.message}`,
+    stack: error.stack
+  });
+  self.close();
+}
+
+// ===== CODIGO ORIGINAL =====
+
+/* ---------- Helper debug ---------- */
 function workerDebug(msg, data) {
   try {
     postMessage({ type: 'debug', message: msg, data });
-  } catch (_) {
-    // no hacemos nada si falla el debug
-  }
+  } catch (_) {}
 }
 
 /* ---------- DBFGenerator (adaptado) ---------- */
@@ -260,18 +342,22 @@ class DBFGenerator {
 
 /* ---------- Helpers para shp-write robusto y diagnóstico ---------- */
 
+/* ---------- Helpers para shp-write robusto y diagnóstico ---------- */
 async function generateShpZipWithDiagnostics(featureCollection) {
   workerDebug('start-generateShpZip', { featureCount: featureCollection.features.length });
 
   try {
-    workerDebug('shpwrite_type', { typeof_shpwrite: typeof shpwrite, keys: Object.keys(shpwrite || {}) });
+    workerDebug('shpwrite_type', { 
+      typeof_shpwrite: typeof self.shpwrite, 
+      keys: Object.keys(self.shpwrite || {}) 
+    });
   } catch (_) { /* ignore */ }
 
   const tryCallbackStyle = () => new Promise((resolve, reject) => {
     try {
-      if (shpwrite && typeof shpwrite.zip === 'function') {
+      if (self.shpwrite && typeof self.shpwrite.zip === 'function') {
         try {
-          shpwrite.zip(featureCollection, { base64: true }, (err, result) => {
+          self.shpwrite.zip(featureCollection, { base64: true }, (err, result) => {
             if (err) return reject(new Error(`shp-write callback error: ${err && err.message ? err.message : String(err)}`));
             return resolve(result);
           });
@@ -287,8 +373,8 @@ async function generateShpZipWithDiagnostics(featureCollection) {
   });
 
   const tryZipProp = async () => {
-    if (shpwrite && typeof shpwrite.zip === 'function') {
-      const maybe = shpwrite.zip(featureCollection, { base64: true });
+    if (self.shpwrite && typeof self.shpwrite.zip === 'function') {
+      const maybe = self.shpwrite.zip(featureCollection, { base64: true });
       if (maybe && typeof maybe.then === 'function') return await maybe;
       return maybe;
     }
@@ -401,7 +487,7 @@ addEventListener('message', async (e) => {
 
     // 2) Convertir base64 zip a ArrayBuffer y leer con JSZip
     const zipArrayBuffer = base64ToArrayBuffer(shpZipBase64);
-    const tempZip = new JSZip();
+    const tempZip = new self.JSZip();
     await tempZip.loadAsync(zipArrayBuffer).catch(err => { throw new Error(`Failed to parse shp-write ZIP: ${err.message}`); });
 
     const findFile = (zipObj, ext) => {
@@ -429,7 +515,7 @@ addEventListener('message', async (e) => {
     }
 
     // 4) Crear ZIP final con JSZip
-    const zip = new JSZip();
+    const zip = new self.JSZip();
     const baseName = (layerName || 'export').replace(/[^\w]/g, '_').toLowerCase().slice(0, 50);
 
     zip.file(`${baseName}.shp`, shpBuffer);
