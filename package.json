@@ -49,9 +49,9 @@
     "eject": "craco eject",
     "copy:core": "cpx \"node_modules/@arcgis/core/assets/**/*.*\" public/assets",
     "dev": "npm run copy:core && react-scripts start",
-    "electron": "electron .",
-    "electron-build": "npm run build && electron .",
-    "dist": "electron-builder"
+    "electron": "cross-env NODE_ENV=development electron .",
+    "electron-build": "npm run build && cross-env NODE_ENV=development electron .",
+    "dist": "cross-env NODE_ENV=production electron-builder"
   },
   "eslintConfig": {
     "extends": [
@@ -122,6 +122,13 @@
     "win": {
       "icon": "assets/logo.ico",
       "target": "nsis"
-    }
+    },
+      "nsis": {
+        "oneClick": false,
+        "allowToChangeInstallationDirectory": true,
+        "allowElevation": true,
+        "differentialPackage": false,
+        "warningsAsErrors": false
+      }
   }
 }

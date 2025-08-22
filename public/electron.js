@@ -15,6 +15,7 @@ function createMainWindow() {
     width: 1200,
     height: 800,
     icon: path.join(__dirname, 'assets', 'logo.ico'),
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -23,6 +24,10 @@ function createMainWindow() {
       enableRemoteModule: false
     }
   });
+  
+  // Quitar menú por defecto de la ventana de la aplicación
+  mainWindow.setMenu(null);
+  mainWindow.setMenuBarVisibility(false);
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -43,11 +48,12 @@ function createMainWindow() {
   });
 
   // Abrir DevTools anclado a la ventana (muestra consola/Network/Errors)
-  try {
-    // 'right' lo ancla a la derecha dentro de la ventana; usa 'bottom' si prefieres abajo
-    mainWindow.webContents.openDevTools({ mode: 'right' });
-  } catch (e) {
-    console.warn('No se pudo abrir DevTools automáticamente:', e);
+  if (process.env.NODE_ENV === 'development') {
+    try {
+      mainWindow.webContents.openDevTools({ mode: 'right' });
+    } catch (e) {
+      console.warn('No se pudo abrir DevTools automáticamente:', e);
+    }
   }
 
   mainWindow.on('closed', () => {
@@ -171,10 +177,6 @@ async function createApp() {
     } else {
       console.error('No se pudo cargar la app: ni server HTTP ni archivo build/index.html están disponibles.');
     }
-  }
-
-  if (process.env.NODE_ENV === 'development' && mainWindow) {
-    mainWindow.webContents.openDevTools();
   }
 }
 
