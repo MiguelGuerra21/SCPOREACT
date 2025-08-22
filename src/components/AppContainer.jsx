@@ -14,6 +14,7 @@ import { createExportWorker } from '../workers/createExportWorker';
 import SCPOLogger from "../utils/SCPOLogger";
 import { COLOR_PALETTE, COLOR_SIN_ESTADO } from "../utils/ColorPalette.jsx";
 import URLConfig from "../utils/URLConfig"; // Importa la configuración de URLs
+import { Filesystem, Directory } from '@capacitor/filesystem';
 
 
 
@@ -97,8 +98,6 @@ const AppContainer = () => {
             console.error("Error updating layer filter:", error);
         }
     }, []);
-
-
 
     function esFechaValida(val) {
         // Si el valor es null/undefined
@@ -498,17 +497,13 @@ const AppContainer = () => {
         }
         return btoa(result);
     }
+
     async function saveZipUniversal(zipUint8Array, filename = "export.zip") {
-        // Helper: uint8 -> base64 (ya tienes uint8ToBase64)
-        // 1) Capacitor environment (prefer write + share)
         try {
-            if (window.Capacitor && typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() !== 'web') {
+            if (window.Capacitor && typeof window.Capacitor.getPlatform === "function" && window.Capacitor.getPlatform() !== "web") {
                 const base64 = uint8ToBase64(zipUint8Array);
 
-                // importar Filesystem de forma dinámica para evitar errores en web
-                const { Filesystem, Directory } = await import('@capacitor/filesystem');
-
-                // Escribir en el directorio de Documents (interno de la app)
+                // Guardar directamente en Documents/exports/
                 const writeRes = await Filesystem.writeFile({
                     path: `exports/${filename}`,
                     data: base64,
@@ -516,37 +511,14 @@ const AppContainer = () => {
                     recursive: true
                 });
 
-                // Intentar importar Share; si no está instalado, simplemente devolvemos la ruta
-                let Share = null;
-                try {
-                    const mod = await import('@capacitor/share');
-                    Share = mod.Share || mod.default || null;
-                } catch (err) {
-                    // plugin no instalado o plataforma no soportada
-                    console.warn('Capacitor Share no disponible:', err?.message || err);
-                }
-
-                const fileUri = writeRes.uri || writeRes.path || null; // distintas versiones de Capacitor devuelven claves distintas
-                // En Android suele venir en writeRes.uri (file://...)
-                if (Share && fileUri) {
-                    try {
-                        await Share.share({ title: filename, text: filename, url: fileUri });
-                        return { success: true, path: fileUri };
-                    } catch (e) {
-                        console.warn('Share falló, archivo guardado en:', fileUri, e);
-                        return { success: true, path: fileUri };
-                    }
-                }
-
-                // Si Share no disponible, devolvemos la ruta donde se guardó
-                return { success: true, path: fileUri };
+                // Devolver ruta sin abrir Share
+                return { success: true, path: writeRes.uri || writeRes.path };
             }
         } catch (err) {
             console.warn("Capacitor save fallback falló:", err);
-            // continuar a web fallback
         }
 
-        // 2) Web / Electron: try file-saver
+        // Fallback en web/electron
         try {
             const blob = new Blob([zipUint8Array], { type: "application/zip" });
             saveAs(blob, filename);
@@ -555,18 +527,9 @@ const AppContainer = () => {
             console.warn("saveAs falló:", err);
         }
 
-        // 3) fallback abrir en nueva pestaña
-        try {
-            const blob = new Blob([zipUint8Array], { type: "application/zip" });
-            const url = URL.createObjectURL(blob);
-            window.open(url, "_blank");
-            setTimeout(() => URL.revokeObjectURL(url), 60000);
-            return { success: true, url };
-        } catch (e) {
-            console.error("No se pudo guardar el archivo:", e);
-            return { success: false, error: e.message || String(e) };
-        }
+        return { success: false, error: "No se pudo guardar el archivo" };
     }
+
     async function safeCreateExportWorker() {
         // 1) intenta la factory empaquetada (si existe)
         try {
