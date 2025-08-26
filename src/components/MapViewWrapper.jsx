@@ -9,6 +9,7 @@ import WebTileLayer from "@arcgis/core/layers/WebTileLayer";
 import Basemap from "@arcgis/core/Basemap";
 import { FaCog } from "react-icons/fa";
 import { FaPlugCircleXmark, FaPlugCircleCheck } from "react-icons/fa6";
+import styles from './MapViewWrapper.module.css';
 
 const MapViewWrapper = ({
   layersRef,
@@ -427,88 +428,30 @@ const MapViewWrapper = ({
       {["android", "ios"].includes(platform) && (
         <button
           onClick={() => setMultiSelectMode(!multiSelectMode)}
-          style={{
-            position: "absolute", 
-            right: 20, 
-            top: "220px", 
-            zIndex: 1002,
-            padding: "10px 15px", 
-            borderRadius: "20px",
-            backgroundColor: multiSelectMode ? "#007AFF" : "#ccc",
-            color: "white", 
-            border: "none", 
-            fontWeight: "bold",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
-          }}
+          className={styles.multiSelectButton}
+          style={{backgroundColor: multiSelectMode ? "#007AFF" : "#ccc"}}
         >
           {multiSelectMode ? "Modo Normal" : "Multiselección"}
         </button>
       )}
 
       {/* Nuevo botón de modo online/offline */}
-      <div className="mode-selector-container" style={{
-        position: "absolute",
-        right: "20px",
-        bottom: "20px",
-        zIndex: 1002,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-end"
-      }}>
+      <div className={`mode-selector-container ${styles.selectorContainer}`}>
         {showModeOptions && (
-          <div style={{
-            backgroundColor: "white",
-            borderRadius: "8px",
-            padding: "10px",
-            boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
-            marginBottom: "10px",
-            width: "180px"
-          }}>
-            <div 
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: "8px 12px",
-                cursor: "pointer",
-                backgroundColor: !onlineMode ? "#f0f0f0" : "transparent",
-                borderRadius: "4px"
-              }}
-              onClick={() => changeMode(false)}
-            >
-              <FaPlugCircleXmark style={{ marginRight: "8px", color: "#666" }} />
+          <div className={styles.selectorOn}>
+            <div className={styles.selectorOfflineOff} style={{backgroundColor: !onlineMode ? "#f0f0f0" : "transparent"}} onClick={() => changeMode(false)}>
+              <FaPlugCircleXmark size={20} className={styles.iconOffline} />
               <span>Modo Offline</span>
               {!onlineMode && (
-                <div style={{
-                  marginLeft: "auto",
-                  width: "12px",
-                  height: "12px",
-                  borderRadius: "50%",
-                  backgroundColor: "#007AFF"
-                }} />
+                <div className={styles.offlineDot} />
               )}
             </div>
-            <div 
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: "8px 12px",
-                cursor: "pointer",
-                backgroundColor: onlineMode ? "#f0f0f0" : "transparent",
-                borderRadius: "4px",
-                marginTop: "4px"
-              }}
-              onClick={() => changeMode(true)}
+            <div className={styles.selectorOnlineOff} style={{backgroundColor: onlineMode ? "#f0f0f0" : "transparent",}} onClick={() => changeMode(true)}
             >
-              <FaPlugCircleCheck style={{ marginRight: "8px", color: "#666", size: "lg" }} />
+              <FaPlugCircleCheck size={20} className={styles.iconOnline} />
               <span>Modo Online</span>
               {onlineMode && (
-                <div style={{
-                  marginLeft: "auto",
-                  width: "12px",
-                  height: "12px",
-                  borderRadius: "50%",
-                  backgroundColor: "#007AFF"
-                }} />
+                <div className={styles.onlineDot} />
               )}
             </div>
           </div>
@@ -516,26 +459,14 @@ const MapViewWrapper = ({
         
         <button
           onClick={() => setShowModeOptions(!showModeOptions)}
-          style={{
-            padding: "10px",
-            borderRadius: "50%",
-            backgroundColor: "#fff",
-            color: "#007AFF",
-            border: "none",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "40px",
-            height: "40px"
-          }}
+          className={styles.modeButton}
           title="Cambiar modo de mapa"
         >
           <FaCog size={20} />
         </button>
       </div>
 
-      <div ref={mapDiv} style={{ width: "100%", height: "calc(100vh - 35px)" }} />
+      <div ref={mapDiv} className={styles.mapWindow} />
     </>
   );
 };

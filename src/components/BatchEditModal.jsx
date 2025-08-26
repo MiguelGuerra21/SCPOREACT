@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { FaTimes } from "react-icons/fa";
 import SCPOLogger from "../utils/SCPOLogger";
+import styles from './BatchEditModal.module.css';
 
 export default function BatchEditModal({
   layers,
@@ -227,18 +228,18 @@ export default function BatchEditModal({
   };
 
   return (
-    <div style={backdrop}>
-      <div style={modal}>
-        <div style={header}>
-          <h2 style={title}>Editor de Etapas</h2>
-          <button style={closeBtn} onClick={onCancel}>✕</button>
+    <div className={styles.backdrop}>
+      <div className={styles.modal}>
+        <div className={styles.header}>
+          <h2 className={styles.title}>Editor de Etapas</h2>
+          <button className={styles.closeBtn} onClick={onCancel}>✕</button>
         </div>
-        <div style={body}>
+        <div className={styles.body}>
           {layersWithSel.length > 1 && (
             <>
-              <label style={label}>Capa:</label>
+              <label className={styles.label}>Capa:</label>
               <select
-                style={selectStyle}
+                className={styles.selectStyle}
                 value={selectedLayerIdx}
                 onChange={(e) => setSelectedLayerIdx(Number(e.target.value))}
               >
@@ -251,11 +252,11 @@ export default function BatchEditModal({
             </>
           )}
 
-          <label style={label}>Etapas:</label>
-          <div style={listContainer}>
+          <label className={styles.label}>Etapas:</label>
+          <div className={styles.listContainer}>
             {availableEtapas.map((e) => (
-              <div key={e.dateField} style={{ ...listItem, color: e.hasDate ? "#999" : "#000" }}>
-                <label style={listLabel}>
+              <div key={e.dateField} className={`${styles.listItem} ${e.hasDate ? styles.filled : ""}`}>
+                <label className={styles.listLabel}>
                   <input
                     type="radio"
                     name="etapa"
@@ -267,7 +268,7 @@ export default function BatchEditModal({
                 </label>
                 {e.num === lastFilledNum && (
                   <button
-                    style={delBtn}
+                    className={styles.delBtn}
                     onClick={() => {
                       onClearEtapa(selectedLayerIdx, e.dateField);
                       setRefreshId((id) => id + 1);
@@ -280,24 +281,24 @@ export default function BatchEditModal({
             ))}
           </div>
 
-          <label style={label}>Fecha a aplicar:</label>
-          <div style={inputStyle}>
+          <label className={styles.label}>Fecha a aplicar:</label>
+          <div className={styles.inputStyle}>
             <input
               type="date"
-              style={selectStyle}
+              className={styles.selectStyle}
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
             />
           </div>
 
-          <div style={footer}>
-            <button style={clearAllBtn} disabled={isUpdating} onClick={(handleClearAllEtapas)}>
+          <div className={styles.footer}>
+            <button className={styles.clearAllBtn} disabled={isUpdating} onClick={(handleClearAllEtapas)}>
               {isUpdating ? "Borrando..." : "Borrar todas"}
             </button>
-            <button style={cancelBtn} onClick={onCancel}>
+            <button className={styles.cancelBtn} onClick={onCancel}>
               Cancelar
             </button>
-            <button style={applyBtn} disabled={isUpdating} onClick={handleApplyChanges}>
+            <button className={styles.applyBtn} disabled={isUpdating} onClick={handleApplyChanges}>
               {isUpdating ? "Actualizando..." : "Completar"}
             </button>
           </div>
@@ -307,21 +308,3 @@ export default function BatchEditModal({
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────
-const backdrop = { position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 3000 };
-const modal = { width: 420, borderRadius: 8, overflow: "hidden", backgroundColor: "#fff", boxShadow: "0 4px 16px rgba(0,0,0,0.2)" };
-const header = { padding: "12px 16px", background: "linear-gradient(90deg,#4facfe,#00f2fe)", color: "#fff", display: "flex", justifyContent: "space-between" };
-const title = { margin: 0, fontSize: 18 };
-const closeBtn = { background: "none", border: "none", color: "#fff", fontSize: 20, cursor: "pointer" };
-const body = { padding: 16, display: "flex", flexDirection: "column", gap: 12 };
-const inputStyle = { paddingRight: 16, display: "flex", flexDirection: "column", gap: 12 }
-const label = { display: "block", marginBottom: 4 };
-const selectStyle = { width: "100%", padding: 8, borderRadius: 4, border: "1px solid #ccc", fontSize: 14 };
-const listContainer = { maxHeight: 180, overflowY: "auto", border: "1px solid #ccc", borderRadius: 4, padding: 8 };
-const listItem = { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 0" };
-const listLabel = { display: "flex", alignItems: "center", cursor: "pointer" };
-const delBtn = { marginLeft: 8, background: "none", border: "none", color: "#c00", cursor: "pointer" };
-const clearAllBtn = { marginRight: 8, padding: "6px 12px", background: "#dc3545", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer" };
-const footer = { display: "flex", justifyContent: "flex-end", gap: 8 };
-const cancelBtn = { padding: "8px 16px", background: "#ccc", border: "none", borderRadius: 4 };
-const applyBtn = { padding: "8px 16px", background: "#28a745", color: "#fff", border: "none", borderRadius: 4 };
