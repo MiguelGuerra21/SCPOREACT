@@ -1,6 +1,8 @@
 {
-  "short_name": "Sistema de control de producción en obra (SCPO)",
-  "name": "Create App",
+  "short_name": "SCPO",
+  "name": "Sistema de control de producción en obra",
+  "description": "Aplicación para control y gestión de producción en obra",
+  "lang": "es-ES",
   "icons": [
     {
       "src": "favicon.ico",
