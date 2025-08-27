@@ -14,6 +14,7 @@ import { Capacitor } from "@capacitor/core";
 const env = typeof process !== "undefined" ? process.env : {};
 const useHttpsEnv = (env.REACT_APP_USE_HTTPS || "").toLowerCase() === "true";
 const defaultPort = env.REACT_APP_EXPORT_PORT || "3002";
+const loggerPort = env.REACT_APP_LOGGER_PORT || "3001";
 const devIpEnv = env.REACT_APP_EXPORT_DEV_IP || "localhost";
 const androidIpEnv = env.REACT_APP_EXPORT_ANDROID_IP || "10.0.2.2";
 
@@ -52,8 +53,26 @@ function getBackendUrl() {
     return `${scheme}://${devIpEnv}:${defaultPort}`;
   }
 }
+function getLoggerUrl() {
+  if (platform === "android" || platform === "ios") {
+    const ip = androidIpEnv;
+    return `${scheme}://${ip}:${loggerPort}`;
+  } else if (platform === "electron") {
+    const ip = devIpEnv;
+    return `${scheme}://${ip}:${loggerPort}`;
+  } else {
+    if (typeof window !== "undefined") {
+      if (devIpEnv === "localhost") {
+        const host = window.location.hostname;
+        return `${window.location.protocol}//${host}:${loggerPort}`;
+      }
+    }
+    return `${scheme}://${devIpEnv}:${loggerPort}`;
+  }
+}
 
+const LOGGER_URL = getLoggerUrl();
 const BACKEND_URL = getBackendUrl();
 
-export default { BACKEND_URL, platform, scheme };
-export { BACKEND_URL, platform, scheme, getBackendUrl };
+export default { BACKEND_URL, LOGGER_URL, platform, scheme };
+export { BACKEND_URL, LOGGER_URL, platform, scheme, getBackendUrl, getLoggerUrl };

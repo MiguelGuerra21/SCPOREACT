@@ -235,6 +235,7 @@ const AppContainer = () => {
         // *** LOG: inicio batch edit ***
         SCPOLogger.log({
             timestamp: new Date().toISOString(),
+            credentials : 'omit',
             user: "Usuario1",
             action: "Batch edit apply",
             info: `Layer "${entry.name}" (ID ${entry.id}): editing ${selectedIds.length} feature(s), ` +
@@ -303,6 +304,7 @@ const AppContainer = () => {
         // *** LOG: antes de applyEdits, cuántos updates ***
         SCPOLogger.log({
             timestamp: new Date().toISOString(),
+            credentials : 'omit',
             user: "Usuario1",
             action: "Batch edit apply",
             info: `Prepared ${updates.length} update(s) for layer "${entry.name}".`
@@ -322,6 +324,7 @@ const AppContainer = () => {
             // *** LOG: resultados de edición ***
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
+                credentials : 'omit',
                 user: "Usuario1",
                 action: "Batch edit apply",
                 info: `applyEdits complete: ${result} succeeded, ${fails} failed.`
@@ -334,6 +337,7 @@ const AppContainer = () => {
             // *** LOG: estados recalculados ***
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
+                credentials : 'omit',
                 user: "Usuario1",
                 action: "Batch edit apply",
                 info: `Recalculated Estado for ${oids.length} feature(s) on layer "${entry.name}".`
@@ -343,6 +347,7 @@ const AppContainer = () => {
             // *** LOG: error ***
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
+                credentials : 'omit',
                 user: "Usuario1",
                 action: "Batch edit apply error",
                 info: `Error applying batch edits: ${err.message}`
@@ -795,6 +800,7 @@ const AppContainer = () => {
             // 6) Logging y guardar
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
+                credentials : 'omit',
                 user: "Usuario1",
                 action: "Export shapefile",
                 info: `Exportado "${name}" como ${entry.name}.zip (${goodFeatures.length} features, ${blob.size} bytes)`,
@@ -819,6 +825,7 @@ const AppContainer = () => {
             console.error("Error en exportLayerAsShapefile:", err);
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
+                credentials : 'omit',
                 user: "Usuario1",
                 action: "Export shapefile - ERROR",
                 info: `Error al exportar "${entry?.name || 'unknown'}": ${err.message}`,
@@ -946,6 +953,7 @@ const AppContainer = () => {
             // --- LOG: archivo rechazado por tamaño ---
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
+                credentials : 'omit',
                 user: "Usuario1",
                 action: "Open shapefile rejected",
                 info: `Attempted to load "${file.name}" of ${mb} MB (>10 MB limit)`
@@ -960,6 +968,7 @@ const AppContainer = () => {
         // --- LOG: start opening ---
         SCPOLogger.log({
             timestamp: new Date().toISOString(),
+            credentials : 'omit',
             user: "Usuario1",
             action: "Open shapefile",
             info: `Started opening shapefile "${file.name}". Size: ${file.size} bytes.`
@@ -1002,6 +1011,7 @@ const AppContainer = () => {
             // --- LOG: after parse ---
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
+                credentials : 'omit',
                 user: "Usuario1",
                 action: "Open shapefile",
                 info: `Successfully parsed "${file.name}". ` +
@@ -1433,6 +1443,7 @@ return Text(Date(v), "DD/MM/YYYY");
         } catch (err) {
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
+                credentials : 'omit',
                 user: "Usuario1",
                 action: "Open shapefile error",
                 info: `Error opening "${file.name}": ${err.message}`
