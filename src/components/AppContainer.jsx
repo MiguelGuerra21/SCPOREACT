@@ -729,18 +729,33 @@ const AppContainer = () => {
                     reject(new Error(`Error en worker: ${err?.message || String(err)}`));
                 };
 
-                let BACKEND_URL = URLConfig.BACKEND_URL || "http://localhost:3000";
-                console.log('BACKEND_URL =', BACKEND_URL);
-
+                // Intentamos resolver dinámicamente la mejor URL del backend disponible
+                let BACKEND_URL = URLConfig.BACKEND_URL || null;
                 try {
-                    const mod = await import('../utils/URLConfig'); // <- ajusta ruta según tu proyecto
-                    // puede exportar como named o default, así que comprobamos ambos
-                    BACKEND_URL = mod.BACKEND_URL ?? mod.default?.BACKEND_URL ?? mod.default ?? null;
+                    const mod = await import('../utils/URLConfig');
+                    BACKEND_URL = mod.BACKEND_URL ?? mod.default?.BACKEND_URL ?? mod.default ?? BACKEND_URL;
                 } catch (err) {
                     console.warn('[export] No se pudo cargar URLConfig dinámicamente:', err);
                 }
 
-                // logs
+                // Resolve dinámico: prueba varias IPs (emulador, genymotion, env, previously saved)
+                try {
+                    const resolved = await resolveBackendUrlCandidateList({
+                        urlConfig: { BACKEND_URL },
+                        envOverrides: {
+                            devIpEnv: (typeof process !== 'undefined' ? process.env.REACT_APP_EXPORT_DEV_IP : undefined),
+                            androidIpEnv: (typeof process !== 'undefined' ? process.env.REACT_APP_EXPORT_ANDROID_IP : undefined),
+                            port: (typeof process !== 'undefined' ? process.env.REACT_APP_EXPORT_PORT : '3002'),
+                            forceHttps: false
+                        }
+                    });
+                    if (resolved) {
+                        BACKEND_URL = resolved;
+                    }
+                } catch (e) {
+                    console.warn('[export] resolveBackendUrlCandidateList falló:', e);
+                }
+
                 console.log('[export] usando BACKEND_URL =', BACKEND_URL);
 
                 // Enviar datos al worker
@@ -811,6 +826,93 @@ const AppContainer = () => {
             });
             throw err;
         }
+    }
+
+    // Llamar a esto para resolver la URL del backend disponible.
+    // Opciones/orden de prioridad:
+    // 1) IP guardada en localStorage (clave: 'EXPORT_BACKEND_URL')
+    // 2) valor de URLConfig.BACKEND_URL (si existe)
+    // 3) env vars devIp/androidIp
+    // 4) direcciones comunes: 10.0.2.2, 10.0.3.2, 127.0.0.1
+    // 5) si todo falla devuelve la original URLConfig.BACKEND_URL o null
+    async function probeUrl(url, timeoutMs = 1200) {
+        try {
+            // Añadir cache buster
+            const probeUrl = url + (url.includes('?') ? '&' : '?') + 'r=' + Date.now();
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeoutMs);
+
+            // use no-cors so CORS won't reject; network errors will reject
+            await fetch(probeUrl, { method: 'GET', mode: 'no-cors', signal: controller.signal });
+            clearTimeout(id);
+            return true; // si fetch resolvió -> host accesible
+        } catch (err) {
+            return false;
+        }
+    }
+
+    async function resolveBackendUrlCandidateList({ urlConfig, envOverrides } = {}) {
+        // urlConfig = URLConfig (importado) o string
+        // envOverrides = { devIpEnv, androidIpEnv, port }
+        const candidates = [];
+
+        // 1) previously saved by user or run
+        const saved = localStorage.getItem('EXPORT_BACKEND_URL');
+        if (saved) candidates.push(saved);
+
+        // 2) explicit from URLConfig (si existe)
+        if (typeof urlConfig === 'string') {
+            candidates.push(urlConfig);
+        } else if (urlConfig && urlConfig.BACKEND_URL) {
+            candidates.push(urlConfig.BACKEND_URL);
+        }
+
+        // 3) env overrides passed in (useful at runtime)
+        const devIp = envOverrides?.devIpEnv || (typeof process !== 'undefined' ? process.env.REACT_APP_EXPORT_DEV_IP : null);
+        const androidIp = envOverrides?.androidIpEnv || (typeof process !== 'undefined' ? process.env.REACT_APP_EXPORT_ANDROID_IP : null);
+        const port = envOverrides?.port || (typeof process !== 'undefined' ? process.env.REACT_APP_EXPORT_PORT : null) || '3002';
+        const scheme = (envOverrides && envOverrides.forceHttps) ? 'https' : 'http';
+
+        if (devIp) candidates.push(`${scheme}://${devIp}:${port}`);
+        if (androidIp) candidates.push(`${scheme}://${androidIp}:${port}`);
+
+        // 4) emulator / common fallbacks
+        candidates.push(`${scheme}://10.0.2.2:${port}`);
+        candidates.push(`${scheme}://10.0.3.2:${port}`); // genymotion
+        candidates.push(`${scheme}://127.0.0.1:${port}`);
+        candidates.push(`${scheme}://localhost:${port}`);
+
+        // 5) unique: try to derive host from window.location (if not file://)
+        if (typeof window !== 'undefined' && window.location && window.location.hostname && window.location.protocol && !window.location.protocol.startsWith('file')) {
+            const host = window.location.hostname;
+            candidates.unshift(`${window.location.protocol}//${host}:${port}`); // prefer same host if webpage served
+        }
+
+        // Remove duplicates while preserving order
+        const seen = new Set();
+        const uniq = candidates.filter(c => {
+            if (!c) return false;
+            if (seen.has(c)) return false;
+            seen.add(c);
+            return true;
+        });
+
+        // Probe sequentially with short timeout
+        for (const c of uniq) {
+            try {
+                const ok = await probeUrl(c, 1200); // 1.2s each
+                if (ok) {
+                    // save for next time
+                    try { localStorage.setItem('EXPORT_BACKEND_URL', c); } catch (_) { }
+                    return c;
+                }
+            } catch (e) {
+                // ignore and try next
+            }
+        }
+
+        // nothing found
+        return urlConfig?.BACKEND_URL ?? null;
     }
 
     function toArrayBuffer(file) {
@@ -1345,7 +1447,6 @@ return Text(Date(v), "DD/MM/YYYY");
             setLoadingMessage("");
         }
     };
-
 
     const toggleLayerVisibility = (id) => {
         setLayers((prev) =>

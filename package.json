@@ -48,7 +48,7 @@
   "scripts": {
     "start": "cross-env HOST=0.0.0.0 REACT_APP_EXPORT_DEV_IP=localhost REACT_APP_EXPORT_ANDROID_IP=10.0.2.2 REACT_APP_EXPORT_PORT=3002 concurrently --names \"LOGGER,CLIENT\" -c \"cyan,green\" \"npm run server\" \"npm run client\"",
     "start:emulator": "cross-env HOST=0.0.0.0 REACT_APP_EXPORT_DEV_IP=localhost REACT_APP_EXPORT_ANDROID_IP=10.0.2.2 REACT_APP_EXPORT_PORT=3002 concurrently --names \"LOGGER,CLIENT\" -c \"cyan,green\" \"npm run server\" \"npm run client\"",
-    "start:physical": "cross-env HOST=0.0.0.0 REACT_APP_EXPORT_DEV_IP=192.168.3.173 REACT_APP_EXPORT_ANDROID_IP=192.168.1.131 REACT_APP_EXPORT_PORT=3002 concurrently --names \"LOGGER,CLIENT\" -c \"cyan,green\" \"npm run server\" \"npm run client\"",
+    "start:physical": "cross-env HOST=0.0.0.0 REACT_APP_EXPORT_DEV_IP=localhost REACT_APP_EXPORT_ANDROID_IP=100.78.179.248 REACT_APP_EXPORT_PORT=3002 concurrently --names \"LOGGER,CLIENT\" -c \"cyan,green\" \"npm run server\" \"npm run client\"",
     "client": "craco start",
     "server": "node server/logger.js",
     "build": "npm run copy:core && craco build",
