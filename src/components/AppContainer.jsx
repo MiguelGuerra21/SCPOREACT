@@ -15,6 +15,7 @@ import SCPOLogger from "../utils/SCPOLogger";
 import { COLOR_PALETTE, COLOR_SIN_ESTADO } from "../utils/ColorPalette.jsx";
 import URLConfig from "../utils/URLConfig"; // Importa la configuración de URLs
 import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Toast } from '@capacitor/toast';
 
 
 
@@ -786,7 +787,19 @@ const AppContainer = () => {
             });
 
             //saveAs(blob, `${entry.name}.zip`);
-            await saveZipUniversal(result.zip, `${entry.name}.zip`);
+            const saveRes = await saveZipUniversal(result.zip, `${entry.name}.zip`);
+            try {
+                const isMobile = window.Capacitor && typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() !== 'web';
+                if (saveRes?.success && isMobile) {
+                    const rawPath = saveRes.displayPath ?? saveRes.path ?? '';
+                    const displayPath = (rawPath || '').replace(/^file:\/\//, '');
+                    await Toast.show({
+                        text: `Exportado: ${entry.name}.zip\nGuardado en: ${displayPath || 'Documents/exports'}`
+                    });
+                }
+            } catch (tErr) {
+                console.warn('Toast falló:', tErr);
+            }
         } catch (err) {
             console.error("Error en exportLayerAsShapefile:", err);
             SCPOLogger.log({
