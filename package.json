@@ -134,12 +134,12 @@
       "icon": "assets/logo.ico",
       "target": "nsis"
     },
-      "nsis": {
-        "oneClick": false,
-        "allowToChangeInstallationDirectory": true,
-        "allowElevation": true,
-        "differentialPackage": false,
-        "warningsAsErrors": false
-      }
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "differentialPackage": false,
+      "warningsAsErrors": false
+    }
   }
 }
