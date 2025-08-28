@@ -509,28 +509,35 @@ const AppContainer = () => {
             if (window.Capacitor && typeof window.Capacitor.getPlatform === "function" && window.Capacitor.getPlatform() !== "web") {
                 const base64 = uint8ToBase64(zipUint8Array);
 
-                // Guardar directamente en Documents/exports/
                 const writeRes = await Filesystem.writeFile({
                     path: `exports/${filename}`,
                     data: base64,
-                    directory: Directory.Documents,
+                    directory: Directory.Data,
                     recursive: true
                 });
 
-                // Devolver ruta sin abrir Share
                 return { success: true, path: writeRes.uri || writeRes.path };
             }
         } catch (err) {
             console.warn("Capacitor save fallback falló:", err);
+
+            try {
+                await Toast.show({
+                    text: `Error al guardar: ${err.message || 'Permiso denegado'}`,
+                });
+            } catch (_) { }
+
+            return { success: false, error: err.message };
         }
 
-        // Fallback en web/electron
+        // Fallback en web
         try {
             const blob = new Blob([zipUint8Array], { type: "application/zip" });
             saveAs(blob, filename);
             return { success: true };
         } catch (err) {
             console.warn("saveAs falló:", err);
+            await Toast.show({ text: `Error al descargar en web: ${err.message}` });
         }
 
         return { success: false, error: "No se pudo guardar el archivo" };
@@ -859,8 +866,10 @@ const AppContainer = () => {
             // --- fin del bloque ---
 
 
-            // 5) Validar resultado y crear Blob
-            if (!result?.zip || result.zip.length === 0) throw new Error("El archivo generado está vacío");
+            // 5) Validar resultado solo si es un file válido y crear Blob
+            if (!result || !result.zip || !(result.zip instanceof Uint8Array) || result.zip.length === 0) {
+                throw new Error("Export falló: ZIP inválido o vacío (worker/backend no generó nada)");
+            }
 
             let blob;
             try {
@@ -882,6 +891,9 @@ const AppContainer = () => {
 
             //saveAs(blob, `${entry.name}.zip`);
             const saveRes = await saveZipUniversal(result.zip, `${entry.name}.zip`);
+            if (!saveRes?.success) {
+                throw new Error(`Falló al guardar ZIP: ${saveRes?.error || 'desconocido'}`);
+            }
             try {
                 const isMobile = window.Capacitor && typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() !== 'web';
                 if (saveRes?.success && isMobile) {
