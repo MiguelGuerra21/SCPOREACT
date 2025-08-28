@@ -121,6 +121,7 @@ export default function BatchEditModal({
       // ─────────────── LOGGING HERE ───────────────
       SCPOLogger.log({
         timestamp: new Date().toISOString(),
+        credentials : 'omit',
         user: "Usuario1",
         action: "Clear all etapas",
         info: `Cleared ${updates.length} features on layer "${lw.entry.name}", ` +

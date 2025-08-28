@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import cors from "cors";  
 
 const LOG_PATH = "C:/temp/SCPOLogs.txt";
 
@@ -8,7 +9,9 @@ const LOG_PATH = "C:/temp/SCPOLogs.txt";
 fs.mkdirSync(path.dirname(LOG_PATH), { recursive: true });
 
 const app = express();
+app.use(cors());          
 app.use(express.json());
+
 app.get("/api/ping", (_req, res) => res.sendStatus(204));
 
 app.post("/api/log", (req, res) => {
@@ -24,4 +27,6 @@ app.post("/api/log", (req, res) => {
   });
 });
 
-app.listen(3001, () => console.log("Logger listening on :3001"));
+app.listen(3001, "0.0.0.0", () =>
+  console.log("Logger listening on :3001")
+);

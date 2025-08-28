@@ -1,4 +1,4 @@
-// src/workers/exportWorker.js
+// src/workers/export-worker.js
 /* eslint-disable no-restricted-globals */
 /* eslint-disable no-undef */
 /* eslint-disable no-console */
@@ -459,7 +459,8 @@ function base64ToArrayBuffer(b64) {
 
 /* ---------- Entrypoint: manejar mensajes ---------- */
 addEventListener('message', async (e) => {
-  const { geojson, layerName, options } = e.data || {};
+  const { geojson, layerName, options, backendUrl } = e.data || {};
+  workerDebug('received-backendUrl', { backendUrl });
   const { 
     encoding = 'UTF-8', 
     preserveFids = false,

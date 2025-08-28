@@ -56,6 +56,7 @@ const MapViewWrapper = ({
   multiSelectModeRef.current = multiSelectMode;
   const shiftPressedRef = useRef(false);
   const platform = Capacitor.getPlatform();
+  const isAndroid = Capacitor.getPlatform() === 'android';
 
   const clearBasemap = (map) => {
     try {
