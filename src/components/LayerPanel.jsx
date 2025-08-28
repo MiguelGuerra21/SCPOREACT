@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Capacitor } from "@capacitor/core";
 import { FaChevronRight, FaChevronLeft } from "react-icons/fa";
 import { COLOR_SIN_ESTADO } from "../utils/ColorPalette";
+import styles from "./LayerPanel.module.css";
 
 const LayerPanel = ({
   layers = [],
@@ -128,119 +129,36 @@ const LayerPanel = ({
     };
   };
 
-  // Estilos del componente
-  const containerStyle = embedded
-    ? {
-      position: "relative",
-      width: "100%",
-      backgroundColor: "#fff",
-      borderRadius: 8,
-      boxShadow: "none",
-      overflow: "visible",
-      marginTop: 8,
-      transition: "none",
-      zIndex: "auto",
-    }
-    : {
-      position: "absolute",
-      bottom: isAndroid ? 70 : 60,
-      left: 16,
-      width: isOpen ? 260 : 40,
-      backgroundColor: "#fff",
-      borderRadius: 8,
-      boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-      overflow: "hidden",
-      transition: "width 0.3s",
-      zIndex: 1000,
-    };
-
-  const headerStyle = {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: isOpen ? "space-between" : "center",
-    padding: "8px 12px",
-    background: "linear-gradient(90deg, #4facfe, #00f2fe)",
-    color: "#fff",
-  };
-
-  const toggleBtnStyle = {
-    background: "none",
-    border: "none",
-    color: "#fff",
-    fontSize: 18,
-    cursor: "pointer",
-    transition: "transform 0.3s",
-  };
-
-  const contentStyle = {
-    display: isOpen ? "block" : "none",
-    padding: "8px 12px",
-    maxHeight: embedded ? "none" : "60vh",
-    overflowY: embedded ? "visible" : "auto",
-  };
-
-  const layerItemStyle = {
-    display: "flex",
-    flexDirection: "column",
-    marginBottom: 8,
-    cursor: "default",
-    borderRadius: 4,
-    padding: "4px",
-    backgroundColor: "#f8f9fa",
-  };
-
-  const topRowStyle = {
-    display: "flex",
-    alignItems: "center",
-    width: "100%",
-  };
-
-  const textStyle = {
-    flex: 1,
-    fontSize: 14,
-    userSelect: "none",
-    cursor: "pointer",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  };
-
-  const removeBtnStyle = {
-    background: "none",
-    border: "none",
-    padding: 4,
-    marginLeft: 8,
-    cursor: "pointer",
-    color: "#000",
-    fontSize: 16,
-    lineHeight: 1,
-  };
-
-  const centerBtnStyle = {
-    width: "100%",
-    padding: "8px",
-    marginTop: 8,
-    backgroundColor: "#00b894",
-    color: "#fff",
-    border: "none",
-    borderRadius: 4,
-    cursor: "pointer",
-    transition: "background 0.2s",
-    ":hover": {
-      backgroundColor: "#019875",
-    },
-  };
-
   const handleToggleDetails = (id) => {
     setOpenDetails((old) => (old === id ? null : id));
   };
 
+ // clases del contenedor (embedded vs floating, abierto/cerrado)
+  const containerClasses = [
+    styles.container,
+    embedded ? styles.containerEmbedded : styles.containerFloating,
+    !isOpen && !embedded ? styles.containerClosed : "",
+  ].join(" ");
+
+  // content classes (oculto/embebido)
+  const contentClasses = [
+    styles.content,
+    !isOpen ? styles.contentHidden : "",
+    embedded ? styles.contentEmbedded : "",
+  ].join(" ");
+
+  // cálculo inline mínimo: bottom (Android offset) y left (const)
+  const containerInlineStyle = embedded
+    ? {}
+    : { bottom: isAndroid ? 70 : 60, left: 16 };
+
+
   return (
-    <div style={containerStyle}>
-      <div style={headerStyle}>
+    <div className={containerClasses} style={containerInlineStyle}>
+      <div className={[styles.header, !isOpen ? styles.headerClosed : ""].join(" ")}>
         {isOpen && <strong>Capas</strong>}
         <button
-          style={toggleBtnStyle}
+          className={styles.toggleBtn}
           onClick={() => setIsOpen((o) => !o)}
           aria-label={isOpen ? "Contraer panel" : "Expandir panel"}
         >
@@ -248,44 +166,37 @@ const LayerPanel = ({
         </button>
       </div>
 
-      <div style={contentStyle}>
+      <div className={contentClasses}>
         {layers.length === 0 && (
-          <p style={{ fontStyle: "italic", margin: "8px 0" }}>
+          <p className={styles.emptyText}>
             No hay capas cargadas
           </p>
         )}
         {/* CONTENEDOR CON SCROLL */}
-        <div
-          style={{
-            maxHeight: "300px",
-            overflowY: "auto",
-            paddingRight: "6px",
-            marginBottom: "8px",
-          }}
-        >
+        <div className={styles.scrollContainer}>
           {layers.map((entry) => {
             const isOpenLayer = openDetails === entry.id;
             const { estados, conteos, porcentajes } = getCurrentStats(entry.id);
             const estadosOrdenados = ["Sin estado"].concat(estados.filter(e => e !== "Sin estado"));
 
             return (
-              <div key={entry.id} style={layerItemStyle}>
-                <div style={topRowStyle}>
+              <div key={entry.id} className={styles.layerItem}>
+                <div className={styles.topRow}>
                   <input
                     type="checkbox"
                     checked={entry.visible}
                     onChange={() => onToggleVisibility(entry.id)}
-                    style={{ marginRight: 8 }}
+                    className={styles.checkbox}
                   />
                   <span
-                    style={textStyle}
+                    className={styles.layerName}
                     onClick={() => handleToggleDetails(entry.id)}
                     title={entry.name}
                   >
                     {entry.name}
                   </span>
                   <button
-                    style={removeBtnStyle}
+                    className={styles.removeBtn}
                     onClick={() => onRemoveLayer(entry.id)}
                     title="Eliminar capa"
                   >
@@ -294,13 +205,7 @@ const LayerPanel = ({
                 </div>
 
                 {isOpenLayer && (
-                  <div style={{
-                    backgroundColor: "#f9f9f9",
-                    border: "1px solid #ddd",
-                    borderRadius: 4,
-                    padding: "6px 8px",
-                    marginTop: 6,
-                  }}>
+                  <div className={styles.statesBox}>
                     {estadosOrdenados.length === 0 ? (
                       <em style={{ color: "#888" }}>No hay estados detectados</em>
                     ) : (
@@ -320,59 +225,21 @@ const LayerPanel = ({
                         return (
                           <div
                             key={estado}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              padding: "4px 0",
-                              overflow: "hidden",
-                              cursor: "pointer",
-                              opacity: isHidden ? 0.5 : 1,
-                              backgroundColor: isHidden ? "#f0f0f0" : "transparent",
-                              borderRadius: "4px",
-                              transition: "all 0.2s ease",
-                            }}
+                            className={[styles.stateRow, isHidden ? styles.stateHidden : ""].join(" ")}
                             title={`${estado}: ${pct}% (${count})`}
                             onClick={() => handleToggleState(entry.id, estado)}
                             onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#e9e9e9"}
                             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = isHidden ? "#f0f0f0" : "transparent"}
                           >
                             <span
+                              className={styles.stateColor}
                               style={{
-                                display: "inline-block",
-                                width: 14,
-                                height: 14,
-                                marginRight: 8,
                                 backgroundColor: fill,
                                 border: `2px solid ${outline}`,
-                                borderRadius: 3,
-                                flexShrink: 0,
-                                transition: "all 0.2s ease",
                               }}
                             />
-                            <span
-                              style={{
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                flexGrow: 1,
-                                fontSize: 13,
-                              }}
-                            >
-                              {estado}
-                            </span>
-                            <span
-                              style={{
-                                marginLeft: 8,
-                                flexShrink: 0,
-                                fontWeight: "bold",
-                                color: "#555",
-                                minWidth: 40,
-                                textAlign: "right",
-                                fontSize: 13,
-                              }}
-                            >
-                              {pct}%
-                            </span>
+                            <span className={styles.stateName}>{estado}</span>
+                            <span className={styles.statePercent}>{pct}%</span>
                           </div>
                         );
                       })
@@ -386,7 +253,7 @@ const LayerPanel = ({
 
         {layers.length > 0 && (
           <button
-            style={centerBtnStyle}
+            className={styles.centerBtn}
             onClick={onCenterView}
             onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#019875")}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#00b894")}
