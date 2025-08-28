@@ -235,7 +235,7 @@ const AppContainer = () => {
         // *** LOG: inicio batch edit ***
         SCPOLogger.log({
             timestamp: new Date().toISOString(),
-            credentials : 'omit',
+            credentials: 'omit',
             user: "Usuario1",
             action: "Batch edit apply",
             info: `Layer "${entry.name}" (ID ${entry.id}): editing ${selectedIds.length} feature(s), ` +
@@ -304,7 +304,7 @@ const AppContainer = () => {
         // *** LOG: antes de applyEdits, cuántos updates ***
         SCPOLogger.log({
             timestamp: new Date().toISOString(),
-            credentials : 'omit',
+            credentials: 'omit',
             user: "Usuario1",
             action: "Batch edit apply",
             info: `Prepared ${updates.length} update(s) for layer "${entry.name}".`
@@ -324,7 +324,7 @@ const AppContainer = () => {
             // *** LOG: resultados de edición ***
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
-                credentials : 'omit',
+                credentials: 'omit',
                 user: "Usuario1",
                 action: "Batch edit apply",
                 info: `applyEdits complete: ${result} succeeded, ${fails} failed.`
@@ -337,7 +337,7 @@ const AppContainer = () => {
             // *** LOG: estados recalculados ***
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
-                credentials : 'omit',
+                credentials: 'omit',
                 user: "Usuario1",
                 action: "Batch edit apply",
                 info: `Recalculated Estado for ${oids.length} feature(s) on layer "${entry.name}".`
@@ -347,7 +347,7 @@ const AppContainer = () => {
             // *** LOG: error ***
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
-                credentials : 'omit',
+                credentials: 'omit',
                 user: "Usuario1",
                 action: "Batch edit apply error",
                 info: `Error applying batch edits: ${err.message}`
@@ -684,66 +684,56 @@ const AppContainer = () => {
             // Timeout/Promise para la respuesta del worker
             // --- Reemplazar por este bloque ---
             const result = await new Promise(async (resolve, reject) => {
-                // timeout configurable (workerTimeoutMs viene de la llamada)
                 const timeoutId = setTimeout(() => {
-                    try { worker.terminate(); } catch (_) { }
+                    try { if (worker && typeof worker.terminate === 'function') worker.terminate(); } catch (_) { }
                     reject(new Error("Tiempo de espera agotado al generar el Shapefile"));
                 }, workerTimeoutMs);
 
-                // Handle messages from worker. NO cerramos el timeout en mensajes debug/progress.
-                worker.onmessage = (e) => {
-                    const data = e.data;
-                    console.log('[worker msg]', data);
-                    if (data?.type === 'error') {
-                        console.error('worker reported error:', data.message, data.stack);
-                    }
-
-                    switch (data.type) {
-                        case 'debug':
-                            console.log('[worker debug]', data.message, data.data);
-                            break;
-                        case 'done':
+                // manejadores para worker local (si se usa)
+                const attachWorkerHandlers = (w) => {
+                    w.onmessage = (e) => {
+                        const data = e.data;
+                        //console.log('[worker msg]', data);
+                        if (data?.type === 'done') {
                             clearTimeout(timeoutId);
-                            try { worker.terminate(); } catch (_) { }
-
-                            // Aceptar Uint8Array o ArrayBuffer o TypedArray
+                            try { w.terminate(); } catch (_) { }
                             let zipBytes = data.zip;
-                            if (zipBytes instanceof ArrayBuffer) {
-                                zipBytes = new Uint8Array(zipBytes);
-                            } else if (ArrayBuffer.isView(zipBytes)) {
-                                zipBytes = new Uint8Array(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
-                            }
-
+                            if (zipBytes instanceof ArrayBuffer) zipBytes = new Uint8Array(zipBytes);
+                            else if (ArrayBuffer.isView(zipBytes)) zipBytes = new Uint8Array(zipBytes.buffer, zipBytes.byteOffset, zipBytes.byteLength);
                             if (!zipBytes || !(zipBytes instanceof Uint8Array) || zipBytes.length === 0) {
                                 return reject(new Error("Formato de datos inválido del worker: zip missing/invalid"));
                             }
-
                             return resolve({ ...data, zip: zipBytes });
-                            break;
-                        case 'error':
+                        } else if (data?.type === 'error') {
+                            // worker devolvió error
                             console.error('[worker error]', data.message, data.stack);
-                            break;
-                        default:
-                            console.warn('[worker unknown]', data);
-                    }
+                            // no reject inmediatamente: dejamos que la lógica lo maneje
+                            clearTimeout(timeoutId);
+                            try { w.terminate(); } catch (_) { }
+                            return reject(new Error(data.message || 'Worker reported error'));
+                        } else {
+                            // otros mensajes (debug/progress) -> ignorar
+                            // console.log('[worker debug]', data);
+                        }
+                    };
+
+                    w.onerror = (err) => {
+                        clearTimeout(timeoutId);
+                        try { w.terminate(); } catch (_) { }
+                        reject(new Error(`Error en worker: ${err?.message || String(err)}`));
+                    };
                 };
 
-                worker.onerror = (err) => {
-                    clearTimeout(timeoutId);
-                    try { worker.terminate(); } catch (_) { }
-                    reject(new Error(`Error en worker: ${err?.message || String(err)}`));
-                };
-
-                // Intentamos resolver dinámicamente la mejor URL del backend disponible
+                // reconstrucción del BACKEND_URL
                 let BACKEND_URL = URLConfig.BACKEND_URL || null;
                 try {
                     const mod = await import('../utils/URLConfig');
-                    BACKEND_URL = mod.BACKEND_URL ?? mod.default?.BACKEND_URL ?? mod.default ?? BACKEND_URL;
+                    BACKEND_URL = mod.BACKEND_URL ?? mod.default?.BACKEND_URL ?? BACKEND_URL;
                 } catch (err) {
                     console.warn('[export] No se pudo cargar URLConfig dinámicamente:', err);
                 }
 
-                // Resolve dinámico: prueba varias IPs (emulador, genymotion, env, previously saved)
+                // intento de resolución dinámica (probe)
                 try {
                     const resolved = await resolveBackendUrlCandidateList({
                         urlConfig: { BACKEND_URL },
@@ -754,33 +744,116 @@ const AppContainer = () => {
                             forceHttps: false
                         }
                     });
-                    if (resolved) {
-                        BACKEND_URL = resolved;
-                    }
+                    if (resolved) BACKEND_URL = resolved;
                 } catch (e) {
                     console.warn('[export] resolveBackendUrlCandidateList falló:', e);
                 }
 
                 console.log('[export] usando BACKEND_URL =', BACKEND_URL);
 
-                // Enviar datos al worker
-                try {
-                    worker.postMessage({
-                        geojson: { type: "FeatureCollection", features: goodFeatures },
-                        layerName: entry.name,
-                        backendUrl: URLConfig.BACKEND_URL, // URL del backend para el worker
-                        options: {
-                            encoding: "UTF-8",
-                            maxFieldSize: 254,
-                            strictMode: true,
-                            preserveFids: true,  // Activar preservación
-                            fidFieldName: 'fid'  // Nombre exacto del campo
+                // Si hay BACKEND_URL intentamos usar la API remota primero
+                if (BACKEND_URL) {
+                    const candidates = [
+                        `${BACKEND_URL.replace(/\/$/, '')}/api/export`,
+                        `${BACKEND_URL.replace(/\/$/, '')}/export`,
+                        `${BACKEND_URL.replace(/\/$/, '')}/api/export-shapefile`
+                    ];
+
+                    for (const url of candidates) {
+                        try {
+                            // POST JSON y esperar arraybuffer o JSON con base64
+                            const payload = {
+                                geojson: { type: "FeatureCollection", features: goodFeatures },
+                                layerName: entry.name,
+                                options: {
+                                    encoding: "UTF-8",
+                                    maxFieldSize: 254,
+                                    strictMode: true,
+                                    preserveFids: true,
+                                    fidFieldName: 'fid'
+                                }
+                            };
+
+                            const res = await fetch(url, {
+                                method: 'POST',
+                                credentials: 'omit',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            });
+
+                            if (!res || (res.status >= 400 && res.status !== 202)) {
+                                // intentar siguiente candidate
+                                console.warn('[export] remote export endpoint rejected', url, res && res.status);
+                                continue;
+                            }
+
+                            // intentar leer como arrayBuffer
+                            try {
+                                const ab = await res.arrayBuffer();
+                                const zipBytes = new Uint8Array(ab);
+                                if (!zipBytes || zipBytes.length === 0) throw new Error('Empty arrayBuffer from remote');
+                                clearTimeout(timeoutId);
+                                return resolve({ zip: zipBytes, metadata: { backendUrl: url, method: 'remote-arraybuffer' } });
+                            } catch (abErr) {
+                                // no arraybuffer; tal vez sea JSON con base64
+                                try {
+                                    const json = await res.json();
+                                    const b64 = json && (json.base64 || json.zipBase64 || json.zip);
+                                    if (b64 && typeof b64 === 'string') {
+                                        // decode base64
+                                        const binary = atob(b64.replace(/\s/g, ''));
+                                        const len = binary.length;
+                                        const bytes = new Uint8Array(len);
+                                        for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+                                        clearTimeout(timeoutId);
+                                        return resolve({ zip: bytes, metadata: { backendUrl: url, method: 'remote-json-base64' } });
+                                    }
+                                } catch (jsonErr) {
+                                    console.warn('[export] remote response parsing failed', jsonErr);
+                                }
+                            }
+                        } catch (netErr) {
+                            console.warn('[export] remote export failed at', url, netErr);
+                            // try next url
                         }
-                    });
-                } catch (err) {
+                    } // end for candidates
+
+                    // Si llegamos aquí, la API remota no respondió correctamente -> fallback a worker local
+                    console.warn('[export] No se pudo exportar remotamente, probando worker local');
+                }
+
+                // Intentar worker local (fallback)
+                try {
+                    const localWorker = await safeCreateExportWorker();
+                    if (!localWorker || typeof localWorker.postMessage !== 'function') {
+                        clearTimeout(timeoutId);
+                        return reject(new Error('No local worker available'));
+                    }
+                    worker = localWorker; // reasigna para que onerror/terminate puedan usarlo
+                    attachWorkerHandlers(worker);
+
+                    // Enviar datos al worker local
+                    try {
+                        worker.postMessage({
+                            geojson: { type: "FeatureCollection", features: goodFeatures },
+                            layerName: entry.name,
+                            backendUrl: BACKEND_URL, // null o url; worker puede usarlo si lo necesita
+                            options: {
+                                encoding: "UTF-8",
+                                maxFieldSize: 254,
+                                strictMode: true,
+                                preserveFids: true,
+                                fidFieldName: 'fid'
+                            }
+                        });
+                    } catch (pmErr) {
+                        clearTimeout(timeoutId);
+                        try { worker.terminate(); } catch (_) { }
+                        return reject(new Error(`No se pudo postMessage al worker local: ${pmErr.message || pmErr}`));
+                    }
+                } catch (werr) {
                     clearTimeout(timeoutId);
-                    try { worker.terminate(); } catch (_) { }
-                    reject(new Error(`No se pudo postMessage al worker: ${err.message}`));
+                    return reject(werr);
                 }
             });
             // --- fin del bloque ---
@@ -800,7 +873,7 @@ const AppContainer = () => {
             // 6) Logging y guardar
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
-                credentials : 'omit',
+                credentials: 'omit',
                 user: "Usuario1",
                 action: "Export shapefile",
                 info: `Exportado "${name}" como ${entry.name}.zip (${goodFeatures.length} features, ${blob.size} bytes)`,
@@ -825,7 +898,7 @@ const AppContainer = () => {
             console.error("Error en exportLayerAsShapefile:", err);
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
-                credentials : 'omit',
+                credentials: 'omit',
                 user: "Usuario1",
                 action: "Export shapefile - ERROR",
                 info: `Error al exportar "${entry?.name || 'unknown'}": ${err.message}`,
@@ -878,7 +951,7 @@ const AppContainer = () => {
         const devIp = envOverrides?.devIpEnv || (typeof process !== 'undefined' ? process.env.REACT_APP_EXPORT_DEV_IP : null);
         const androidIp = envOverrides?.androidIpEnv || (typeof process !== 'undefined' ? process.env.REACT_APP_EXPORT_ANDROID_IP : null);
         const port = envOverrides?.port || (typeof process !== 'undefined' ? process.env.REACT_APP_EXPORT_PORT : null) || '3002';
-        const scheme = (envOverrides && envOverrides.forceHttps) ? 'https' : 'http';
+        const scheme = (envOverrides && envOverrides.forceHttps) ? 'http' : 'http';
 
         if (devIp) candidates.push(`${scheme}://${devIp}:${port}`);
         if (androidIp) candidates.push(`${scheme}://${androidIp}:${port}`);
@@ -953,7 +1026,7 @@ const AppContainer = () => {
             // --- LOG: archivo rechazado por tamaño ---
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
-                credentials : 'omit',
+                credentials: 'omit',
                 user: "Usuario1",
                 action: "Open shapefile rejected",
                 info: `Attempted to load "${file.name}" of ${mb} MB (>10 MB limit)`
@@ -968,7 +1041,7 @@ const AppContainer = () => {
         // --- LOG: start opening ---
         SCPOLogger.log({
             timestamp: new Date().toISOString(),
-            credentials : 'omit',
+            credentials: 'omit',
             user: "Usuario1",
             action: "Open shapefile",
             info: `Started opening shapefile "${file.name}". Size: ${file.size} bytes.`
@@ -1011,7 +1084,7 @@ const AppContainer = () => {
             // --- LOG: after parse ---
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
-                credentials : 'omit',
+                credentials: 'omit',
                 user: "Usuario1",
                 action: "Open shapefile",
                 info: `Successfully parsed "${file.name}". ` +
@@ -1443,7 +1516,7 @@ return Text(Date(v), "DD/MM/YYYY");
         } catch (err) {
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
-                credentials : 'omit',
+                credentials: 'omit',
                 user: "Usuario1",
                 action: "Open shapefile error",
                 info: `Error opening "${file.name}": ${err.message}`
