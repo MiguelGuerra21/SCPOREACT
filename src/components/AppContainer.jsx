@@ -512,7 +512,7 @@ const AppContainer = () => {
                 const writeRes = await Filesystem.writeFile({
                     path: `exports/${filename}`,
                     data: base64,
-                    directory: Directory.Data,
+                    directory: Directory.Documents,
                     recursive: true
                 });
 
