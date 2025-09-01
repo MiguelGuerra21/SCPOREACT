@@ -16,6 +16,7 @@ import { COLOR_PALETTE, COLOR_SIN_ESTADO } from "../utils/ColorPalette.jsx";
 import URLConfig from "../utils/URLConfig"; // Importa la configuración de URLs
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Toast } from '@capacitor/toast';
+import { Capacitor } from '@capacitor/core';
 
 
 
@@ -512,7 +513,7 @@ const AppContainer = () => {
                 const writeRes = await Filesystem.writeFile({
                     path: `exports/${filename}`,
                     data: base64,
-                    directory: Directory.Data,
+                    directory: Directory.Documents, 
                     recursive: true
                 });
 
@@ -536,8 +537,7 @@ const AppContainer = () => {
             saveAs(blob, filename);
             return { success: true };
         } catch (err) {
-            console.warn("saveAs falló:", err);
-            await Toast.show({ text: `Error al descargar en web: ${err.message}` });
+            console.error("Error saving ZIP in web fallback:", err);
         }
 
         return { success: false, error: "No se pudo guardar el archivo" };
@@ -577,7 +577,7 @@ const AppContainer = () => {
         return fake;
     }
     //Exportar como shapefile
-    async function exportLayerAsShapefile(entry, { workerTimeoutMs = 60000 } = {}) {
+    async function exportLayerAsShapefile(entry, { workerTimeoutMs = 60000, filenameOverride = null } = {}) {
         try {
             const { layer, name, fechaCampos } = entry;
 
@@ -880,6 +880,7 @@ const AppContainer = () => {
             }
 
             // 6) Logging y guardar
+            const finalName = filenameOverride || `${entry.name}.zip`;
             SCPOLogger.log({
                 timestamp: new Date().toISOString(),
                 credentials: 'omit',
@@ -890,7 +891,7 @@ const AppContainer = () => {
             });
 
             //saveAs(blob, `${entry.name}.zip`);
-            const saveRes = await saveZipUniversal(result.zip, `${entry.name}.zip`);
+            const saveRes = await saveZipUniversal(result.zip, finalName);
             if (!saveRes?.success) {
                 throw new Error(`Falló al guardar ZIP: ${saveRes?.error || 'desconocido'}`);
             }
@@ -900,7 +901,7 @@ const AppContainer = () => {
                     const rawPath = saveRes.displayPath ?? saveRes.path ?? '';
                     const displayPath = (rawPath || '').replace(/^file:\/\//, '');
                     await Toast.show({
-                        text: `Exportado: ${entry.name}.zip\nGuardado en: ${displayPath || 'Documents/exports'}`
+                        text: `Exportado: ${finalName}\nGuardado en: ${displayPath || 'Documents/exports'}`
                     });
                 }
             } catch (tErr) {
@@ -1641,21 +1642,57 @@ return Text(Date(v), "DD/MM/YYYY");
         }
         setExportModalOpen(true);
     };
-    const handleExportConfirm = async (idx) => {
+
+    const isAndroid = () => {
+        try {
+            return typeof Capacitor !== 'undefined' && Capacitor.getPlatform && Capacitor.getPlatform() === 'android';
+        } catch {
+            return false;
+        }
+    };
+
+    const handleExportConfirm = async (idx, filename) => {
         setExportModalOpen(false);
         setLoading(true);
         setLoadingMessage("Guardando archivo...");
+
         try {
             const entry = layers[idx];
-            await exportLayerAsShapefile(entry);
-        }
-        catch (error) {
+            const nameToUse = filename && String(filename).trim() ? filename.trim() : `${entry.name}.zip`;
+
+            // Pasa filenameOverride si tu export lo soporta
+            await exportLayerAsShapefile(entry, { workerTimeoutMs: 60000, filenameOverride: nameToUse });
+
+            // Mostrar toast SOLO en Android
+            if (isAndroid()) {
+                try {
+                    await Toast.show({ text: `Exportado: ${nameToUse}` });
+                } catch (tErr) {
+                    console.warn('Toast falló en Android:', tErr);
+                }
+            } else {
+                // opcional: notificación para web/electron (descomenta si quieres)
+                // alert(`Exportado: ${nameToUse}`);
+            }
+        } catch (error) {
             console.error("Error en exportLayerAsShapefile:", error);
-            alert("Error al exportar: " + error.message);
+            const msg = error?.message || String(error) || 'Error desconocido al exportar';
+            if (isAndroid()) {
+                try {
+                    await Toast.show({ text: `Error al exportar: ${msg}` });
+                } catch (_) {
+                    console.warn('Toast error al mostrar fallo:', _);
+                }
+            } else {
+                alert("Error al exportar: " + msg); // fallback para web
+            }
+        } finally {
+            setLoading(false);
+            setLoadingMessage("");
         }
-        setLoading(false);
-        setLoadingMessage(""); // Oculta el overlay al terminar
     };
+
+
     const handleExportCancel = () => {
         setExportModalOpen(false);
     };
@@ -1768,7 +1805,7 @@ return Text(Date(v), "DD/MM/YYYY");
                 <ExportModal
                     layers={layers}
                     onCancel={handleExportCancel}
-                    onConfirm={handleExportConfirm}
+                    onConfirm={(idx, filename) => handleExportConfirm(idx, filename)}
                 />
             )}
         </div>
